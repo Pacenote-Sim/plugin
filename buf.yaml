@@ -1,0 +1,7 @@
+# buf compiles proto/plugin.proto without protoc. Regenerate with `make proto`.
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD

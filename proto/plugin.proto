@@ -1,0 +1,164 @@
+// The Pacenote plugin contract, version 1.
+//
+// A plugin is a separate process. The host starts it, hands it a handshake on
+// standard output, and speaks gRPC to it over a local socket. Everything below
+// is that conversation and nothing else.
+//
+// The bodies are JSON documents rather than protobuf messages. That is
+// deliberate: this product already speaks JSON on the wire between the client
+// and the server, the facts a coach is given are the same facts in both places,
+// and one schema documented once is worth more than two that can drift. The
+// Go spellings are in the root of this module; any other language reads the
+// same JSON.
+//
+// Credentials are the exception. They travel in their own map field and never
+// inside a JSON body, so a plugin author who logs the request they were given
+// cannot leak the operator's key by accident.
+syntax = "proto3";
+
+package pacenote.plugin.v1;
+
+option go_package = "github.com/pacenote-sim/plugin/internal/pb";
+
+// Plugin is what every plugin serves. Four calls, matching the four things a
+// host does: ask what to configure, say what happened, ask for something, and
+// hand over a request somebody made of it.
+service Plugin {
+  // Settings declares what the operator has to fill in. The host asks once,
+  // when the plugin starts, and stores the answer so the panel can render the
+  // form whether or not the plugin is running.
+  rpc Settings(SettingsRequest) returns (SettingsResponse);
+
+  // Notify tells the plugin something happened. The host does not wait for the
+  // answer before carrying on with its own work, but the answer still carries
+  // what the call spent, because a plugin that burns the operator's tokens on
+  // an event must be metered like any other call.
+  rpc Notify(NotifyRequest) returns (NotifyResponse);
+
+  // Answer asks the plugin for something and waits. The deadline is on the
+  // context; a plugin that misses it is skipped and the caller is told so.
+  rpc Answer(AnswerRequest) returns (AnswerResponse);
+
+  // Serve hands over one HTTP request made to /plugin/<name>/..., and takes
+  // back what to answer with. It is how a plugin puts a page or an endpoint on
+  // the operator's server without being linked into it.
+  //
+  // One request, one response, both whole: there is no streaming and no
+  // upgrade, so a plugin cannot hold a connection open against the host. The
+  // host caps both bodies and the time this may take, and a plugin that misses
+  // the deadline is answered for.
+  rpc Serve(ServeRequest) returns (ServeResponse);
+}
+
+// SettingsRequest is empty. What a plugin needs configured cannot depend on the
+// configuration, or a fresh installation would have no way in.
+message SettingsRequest {}
+
+// SettingsResponse carries a JSON array of Setting.
+message SettingsResponse {
+  bytes settings_json = 1;
+}
+
+// NotifyRequest carries a JSON Event, the operator's settings for this plugin,
+// and the credentials this plugin declared.
+message NotifyRequest {
+  bytes event_json = 1;
+  bytes values_json = 2;
+  // secrets maps a declared setting name to the credential the core holds for
+  // it. Present only for the settings this plugin itself declared as secret:
+  // no plugin ever receives another plugin's.
+  map<string, string> secrets = 3;
+}
+
+// NotifyResponse carries a JSON Usage: what the event cost, if anything.
+message NotifyResponse {
+  bytes usage_json = 1;
+}
+
+// AnswerRequest carries a JSON Request, the settings and the secrets, on the
+// same terms as NotifyRequest.
+message AnswerRequest {
+  bytes request_json = 1;
+  bytes values_json = 2;
+  map<string, string> secrets = 3;
+}
+
+// AnswerResponse carries a JSON Response, which includes the Usage the call
+// cost. A plugin that answers without reporting what it spent is reporting
+// zero, and the operator's cap will believe it.
+message AnswerResponse {
+  bytes response_json = 1;
+}
+
+// ServeRequest is one HTTP request, forwarded whole.
+message ServeRequest {
+  // method is the HTTP method, uppercased.
+  string method = 1;
+  // path is what follows /plugin/<name>, always beginning with a slash. The
+  // plugin's own routing starts here.
+  string path = 2;
+  // query is the raw query string, without the leading question mark.
+  string query = 3;
+  // headers are the request's headers, canonicalised, minus the ones that
+  // belong to the host: no cookie of the host's own reaches a plugin, because
+  // a plugin holding the operator's admin session would be the operator.
+  map<string, HeaderValues> headers = 4;
+  // body is the request body, already capped by the host.
+  bytes body = 5;
+  // caller is what the host knows about whoever made the request.
+  Caller caller = 6;
+  // prefix is the address this plugin is mounted at, so that it can build
+  // links and form actions that come back to itself.
+  string prefix = 7;
+  // base_url is the operator's own public address, for the links a plugin
+  // sends somewhere else and expects back.
+  string base_url = 8;
+  // values_json and secrets are the plugin's configuration, on the same terms
+  // as every other call.
+  bytes values_json = 9;
+  map<string, string> secrets = 10;
+}
+
+// HeaderValues is one header's values, because protobuf maps cannot hold a
+// repeated field directly.
+message HeaderValues {
+  repeated string values = 1;
+}
+
+// Caller is who the host believes made the request. Every field is the host's
+// word, not the caller's: none of it is read from a header a client can set.
+message Caller {
+  // driver_slug is the signed-in driver, or empty for nobody. It is set only
+  // where the host holds a driver session, which is the host's to mint.
+  string driver_slug = 1;
+  // driver_name is that driver's name, so a plugin need not look it up to say
+  // hello.
+  string driver_name = 2;
+  // admin_email is the signed-in operator, or empty. A plugin serving an
+  // operator-only page is told who is reading it.
+  string admin_email = 3;
+  // remote is the address the request came from, as the host resolved it
+  // behind whatever proxy the operator runs.
+  string remote = 4;
+}
+
+// ServeResponse is what to answer with.
+message ServeResponse {
+  // status is the HTTP status code. Zero means 200.
+  uint32 status = 1;
+  // headers are the headers to write. The host refuses the ones that are its
+  // own to decide, and allows a plugin to set only its own cookies.
+  map<string, HeaderValues> headers = 2;
+  // body is the response body, capped by the host.
+  bytes body = 3;
+  // sign_in asks the host to establish a driver session for this browser, by
+  // the driver's slug. It is how a plugin that authenticates drivers hands the
+  // result back: the plugin says who, and the host mints the session. A plugin
+  // never sees a session token and cannot make one.
+  string sign_in = 4;
+  // sign_out ends whatever driver session this browser has.
+  bool sign_out = 5;
+  // usage_json is what serving the request cost, if anything, on the same
+  // terms as every other call.
+  bytes usage_json = 6;
+}

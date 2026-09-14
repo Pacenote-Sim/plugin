@@ -1,0 +1,10 @@
+# The generated tree is committed, so building this module needs only a Go
+# toolchain. Regenerate with `make proto` after changing proto/plugin.proto.
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: internal/pb
+    opt: paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: internal/pb
+    opt: paths=source_relative
