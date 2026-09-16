@@ -1,4 +1,4 @@
-// The Pacenote plugin contract, version 1.
+// The Pacenote plugin contract, version 3.
 //
 // A plugin is a separate process. The host starts it, hands it a handshake on
 // standard output, and speaks gRPC to it over a local socket. Everything below
@@ -38,17 +38,123 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// SettingsRequest is empty. What a plugin needs configured cannot depend on the
-// configuration, or a fresh installation would have no way in.
-type SettingsRequest struct {
+type HostAskRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	Payload       []byte                 `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	Hops          uint32                 `protobuf:"varint,3,opt,name=hops,proto3" json:"hops,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HostAskRequest) Reset() {
+	*x = HostAskRequest{}
+	mi := &file_plugin_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HostAskRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HostAskRequest) ProtoMessage() {}
+
+func (x *HostAskRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HostAskRequest.ProtoReflect.Descriptor instead.
+func (*HostAskRequest) Descriptor() ([]byte, []int) {
+	return file_plugin_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *HostAskRequest) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *HostAskRequest) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *HostAskRequest) GetHops() uint32 {
+	if x != nil {
+		return x.Hops
+	}
+	return 0
+}
+
+type HostAskResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Payload       []byte                 `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HostAskResponse) Reset() {
+	*x = HostAskResponse{}
+	mi := &file_plugin_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HostAskResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HostAskResponse) ProtoMessage() {}
+
+func (x *HostAskResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_plugin_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HostAskResponse.ProtoReflect.Descriptor instead.
+func (*HostAskResponse) Descriptor() ([]byte, []int) {
+	return file_plugin_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *HostAskResponse) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+type SettingsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// host_broker_id is where the plugin reaches the Host service above, on the
+	// broker go-plugin opened between the two processes. Zero means the host
+	// offers none, and a plugin that asks finds nobody to ask.
+	HostBrokerId  uint32 `protobuf:"varint,1,opt,name=host_broker_id,json=hostBrokerId,proto3" json:"host_broker_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SettingsRequest) Reset() {
 	*x = SettingsRequest{}
-	mi := &file_plugin_proto_msgTypes[0]
+	mi := &file_plugin_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -60,7 +166,7 @@ func (x *SettingsRequest) String() string {
 func (*SettingsRequest) ProtoMessage() {}
 
 func (x *SettingsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[0]
+	mi := &file_plugin_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -73,7 +179,14 @@ func (x *SettingsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettingsRequest.ProtoReflect.Descriptor instead.
 func (*SettingsRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{0}
+	return file_plugin_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *SettingsRequest) GetHostBrokerId() uint32 {
+	if x != nil {
+		return x.HostBrokerId
+	}
+	return 0
 }
 
 // SettingsResponse carries a JSON array of Setting.
@@ -86,7 +199,7 @@ type SettingsResponse struct {
 
 func (x *SettingsResponse) Reset() {
 	*x = SettingsResponse{}
-	mi := &file_plugin_proto_msgTypes[1]
+	mi := &file_plugin_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -98,7 +211,7 @@ func (x *SettingsResponse) String() string {
 func (*SettingsResponse) ProtoMessage() {}
 
 func (x *SettingsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[1]
+	mi := &file_plugin_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -111,7 +224,7 @@ func (x *SettingsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettingsResponse.ProtoReflect.Descriptor instead.
 func (*SettingsResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{1}
+	return file_plugin_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *SettingsResponse) GetSettingsJson() []byte {
@@ -137,7 +250,7 @@ type NotifyRequest struct {
 
 func (x *NotifyRequest) Reset() {
 	*x = NotifyRequest{}
-	mi := &file_plugin_proto_msgTypes[2]
+	mi := &file_plugin_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -149,7 +262,7 @@ func (x *NotifyRequest) String() string {
 func (*NotifyRequest) ProtoMessage() {}
 
 func (x *NotifyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[2]
+	mi := &file_plugin_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -162,7 +275,7 @@ func (x *NotifyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotifyRequest.ProtoReflect.Descriptor instead.
 func (*NotifyRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{2}
+	return file_plugin_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *NotifyRequest) GetEventJson() []byte {
@@ -196,7 +309,7 @@ type NotifyResponse struct {
 
 func (x *NotifyResponse) Reset() {
 	*x = NotifyResponse{}
-	mi := &file_plugin_proto_msgTypes[3]
+	mi := &file_plugin_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -208,7 +321,7 @@ func (x *NotifyResponse) String() string {
 func (*NotifyResponse) ProtoMessage() {}
 
 func (x *NotifyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[3]
+	mi := &file_plugin_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -221,7 +334,7 @@ func (x *NotifyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NotifyResponse.ProtoReflect.Descriptor instead.
 func (*NotifyResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{3}
+	return file_plugin_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *NotifyResponse) GetUsageJson() []byte {
@@ -244,7 +357,7 @@ type AnswerRequest struct {
 
 func (x *AnswerRequest) Reset() {
 	*x = AnswerRequest{}
-	mi := &file_plugin_proto_msgTypes[4]
+	mi := &file_plugin_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -256,7 +369,7 @@ func (x *AnswerRequest) String() string {
 func (*AnswerRequest) ProtoMessage() {}
 
 func (x *AnswerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[4]
+	mi := &file_plugin_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -269,7 +382,7 @@ func (x *AnswerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnswerRequest.ProtoReflect.Descriptor instead.
 func (*AnswerRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{4}
+	return file_plugin_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *AnswerRequest) GetRequestJson() []byte {
@@ -305,7 +418,7 @@ type AnswerResponse struct {
 
 func (x *AnswerResponse) Reset() {
 	*x = AnswerResponse{}
-	mi := &file_plugin_proto_msgTypes[5]
+	mi := &file_plugin_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -317,7 +430,7 @@ func (x *AnswerResponse) String() string {
 func (*AnswerResponse) ProtoMessage() {}
 
 func (x *AnswerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[5]
+	mi := &file_plugin_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -330,7 +443,7 @@ func (x *AnswerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AnswerResponse.ProtoReflect.Descriptor instead.
 func (*AnswerResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{5}
+	return file_plugin_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *AnswerResponse) GetResponseJson() []byte {
@@ -374,7 +487,7 @@ type ServeRequest struct {
 
 func (x *ServeRequest) Reset() {
 	*x = ServeRequest{}
-	mi := &file_plugin_proto_msgTypes[6]
+	mi := &file_plugin_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -386,7 +499,7 @@ func (x *ServeRequest) String() string {
 func (*ServeRequest) ProtoMessage() {}
 
 func (x *ServeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[6]
+	mi := &file_plugin_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -399,7 +512,7 @@ func (x *ServeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServeRequest.ProtoReflect.Descriptor instead.
 func (*ServeRequest) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{6}
+	return file_plugin_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ServeRequest) GetMethod() string {
@@ -483,7 +596,7 @@ type HeaderValues struct {
 
 func (x *HeaderValues) Reset() {
 	*x = HeaderValues{}
-	mi := &file_plugin_proto_msgTypes[7]
+	mi := &file_plugin_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -495,7 +608,7 @@ func (x *HeaderValues) String() string {
 func (*HeaderValues) ProtoMessage() {}
 
 func (x *HeaderValues) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[7]
+	mi := &file_plugin_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -508,7 +621,7 @@ func (x *HeaderValues) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeaderValues.ProtoReflect.Descriptor instead.
 func (*HeaderValues) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{7}
+	return file_plugin_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *HeaderValues) GetValues() []string {
@@ -540,7 +653,7 @@ type Caller struct {
 
 func (x *Caller) Reset() {
 	*x = Caller{}
-	mi := &file_plugin_proto_msgTypes[8]
+	mi := &file_plugin_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -552,7 +665,7 @@ func (x *Caller) String() string {
 func (*Caller) ProtoMessage() {}
 
 func (x *Caller) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[8]
+	mi := &file_plugin_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -565,7 +678,7 @@ func (x *Caller) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Caller.ProtoReflect.Descriptor instead.
 func (*Caller) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{8}
+	return file_plugin_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Caller) GetDriverSlug() string {
@@ -622,7 +735,7 @@ type ServeResponse struct {
 
 func (x *ServeResponse) Reset() {
 	*x = ServeResponse{}
-	mi := &file_plugin_proto_msgTypes[9]
+	mi := &file_plugin_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -634,7 +747,7 @@ func (x *ServeResponse) String() string {
 func (*ServeResponse) ProtoMessage() {}
 
 func (x *ServeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_plugin_proto_msgTypes[9]
+	mi := &file_plugin_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -647,7 +760,7 @@ func (x *ServeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServeResponse.ProtoReflect.Descriptor instead.
 func (*ServeResponse) Descriptor() ([]byte, []int) {
-	return file_plugin_proto_rawDescGZIP(), []int{9}
+	return file_plugin_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ServeResponse) GetStatus() uint32 {
@@ -696,8 +809,15 @@ var File_plugin_proto protoreflect.FileDescriptor
 
 const file_plugin_proto_rawDesc = "" +
 	"\n" +
-	"\fplugin.proto\x12\x12pacenote.plugin.v1\"\x11\n" +
-	"\x0fSettingsRequest\"7\n" +
+	"\fplugin.proto\x12\x12pacenote.plugin.v1\"R\n" +
+	"\x0eHostAskRequest\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x18\n" +
+	"\apayload\x18\x02 \x01(\fR\apayload\x12\x12\n" +
+	"\x04hops\x18\x03 \x01(\rR\x04hops\"+\n" +
+	"\x0fHostAskResponse\x12\x18\n" +
+	"\apayload\x18\x01 \x01(\fR\apayload\"7\n" +
+	"\x0fSettingsRequest\x12$\n" +
+	"\x0ehost_broker_id\x18\x01 \x01(\rR\fhostBrokerId\"7\n" +
 	"\x10SettingsResponse\x12#\n" +
 	"\rsettings_json\x18\x01 \x01(\fR\fsettingsJson\"\xd5\x01\n" +
 	"\rNotifyRequest\x12\x1d\n" +
@@ -766,7 +886,9 @@ const file_plugin_proto_rawDesc = "" +
 	"\bSettings\x12#.pacenote.plugin.v1.SettingsRequest\x1a$.pacenote.plugin.v1.SettingsResponse\x12O\n" +
 	"\x06Notify\x12!.pacenote.plugin.v1.NotifyRequest\x1a\".pacenote.plugin.v1.NotifyResponse\x12O\n" +
 	"\x06Answer\x12!.pacenote.plugin.v1.AnswerRequest\x1a\".pacenote.plugin.v1.AnswerResponse\x12L\n" +
-	"\x05Serve\x12 .pacenote.plugin.v1.ServeRequest\x1a!.pacenote.plugin.v1.ServeResponseB,Z*github.com/pacenote-sim/plugin/internal/pbb\x06proto3"
+	"\x05Serve\x12 .pacenote.plugin.v1.ServeRequest\x1a!.pacenote.plugin.v1.ServeResponse2V\n" +
+	"\x04Host\x12N\n" +
+	"\x03Ask\x12\".pacenote.plugin.v1.HostAskRequest\x1a#.pacenote.plugin.v1.HostAskResponseB,Z*github.com/pacenote-sim/plugin/internal/pbb\x06proto3"
 
 var (
 	file_plugin_proto_rawDescOnce sync.Once
@@ -780,43 +902,47 @@ func file_plugin_proto_rawDescGZIP() []byte {
 	return file_plugin_proto_rawDescData
 }
 
-var file_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_plugin_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_plugin_proto_goTypes = []any{
-	(*SettingsRequest)(nil),  // 0: pacenote.plugin.v1.SettingsRequest
-	(*SettingsResponse)(nil), // 1: pacenote.plugin.v1.SettingsResponse
-	(*NotifyRequest)(nil),    // 2: pacenote.plugin.v1.NotifyRequest
-	(*NotifyResponse)(nil),   // 3: pacenote.plugin.v1.NotifyResponse
-	(*AnswerRequest)(nil),    // 4: pacenote.plugin.v1.AnswerRequest
-	(*AnswerResponse)(nil),   // 5: pacenote.plugin.v1.AnswerResponse
-	(*ServeRequest)(nil),     // 6: pacenote.plugin.v1.ServeRequest
-	(*HeaderValues)(nil),     // 7: pacenote.plugin.v1.HeaderValues
-	(*Caller)(nil),           // 8: pacenote.plugin.v1.Caller
-	(*ServeResponse)(nil),    // 9: pacenote.plugin.v1.ServeResponse
-	nil,                      // 10: pacenote.plugin.v1.NotifyRequest.SecretsEntry
-	nil,                      // 11: pacenote.plugin.v1.AnswerRequest.SecretsEntry
-	nil,                      // 12: pacenote.plugin.v1.ServeRequest.HeadersEntry
-	nil,                      // 13: pacenote.plugin.v1.ServeRequest.SecretsEntry
-	nil,                      // 14: pacenote.plugin.v1.ServeResponse.HeadersEntry
+	(*HostAskRequest)(nil),   // 0: pacenote.plugin.v1.HostAskRequest
+	(*HostAskResponse)(nil),  // 1: pacenote.plugin.v1.HostAskResponse
+	(*SettingsRequest)(nil),  // 2: pacenote.plugin.v1.SettingsRequest
+	(*SettingsResponse)(nil), // 3: pacenote.plugin.v1.SettingsResponse
+	(*NotifyRequest)(nil),    // 4: pacenote.plugin.v1.NotifyRequest
+	(*NotifyResponse)(nil),   // 5: pacenote.plugin.v1.NotifyResponse
+	(*AnswerRequest)(nil),    // 6: pacenote.plugin.v1.AnswerRequest
+	(*AnswerResponse)(nil),   // 7: pacenote.plugin.v1.AnswerResponse
+	(*ServeRequest)(nil),     // 8: pacenote.plugin.v1.ServeRequest
+	(*HeaderValues)(nil),     // 9: pacenote.plugin.v1.HeaderValues
+	(*Caller)(nil),           // 10: pacenote.plugin.v1.Caller
+	(*ServeResponse)(nil),    // 11: pacenote.plugin.v1.ServeResponse
+	nil,                      // 12: pacenote.plugin.v1.NotifyRequest.SecretsEntry
+	nil,                      // 13: pacenote.plugin.v1.AnswerRequest.SecretsEntry
+	nil,                      // 14: pacenote.plugin.v1.ServeRequest.HeadersEntry
+	nil,                      // 15: pacenote.plugin.v1.ServeRequest.SecretsEntry
+	nil,                      // 16: pacenote.plugin.v1.ServeResponse.HeadersEntry
 }
 var file_plugin_proto_depIdxs = []int32{
-	10, // 0: pacenote.plugin.v1.NotifyRequest.secrets:type_name -> pacenote.plugin.v1.NotifyRequest.SecretsEntry
-	11, // 1: pacenote.plugin.v1.AnswerRequest.secrets:type_name -> pacenote.plugin.v1.AnswerRequest.SecretsEntry
-	12, // 2: pacenote.plugin.v1.ServeRequest.headers:type_name -> pacenote.plugin.v1.ServeRequest.HeadersEntry
-	8,  // 3: pacenote.plugin.v1.ServeRequest.caller:type_name -> pacenote.plugin.v1.Caller
-	13, // 4: pacenote.plugin.v1.ServeRequest.secrets:type_name -> pacenote.plugin.v1.ServeRequest.SecretsEntry
-	14, // 5: pacenote.plugin.v1.ServeResponse.headers:type_name -> pacenote.plugin.v1.ServeResponse.HeadersEntry
-	7,  // 6: pacenote.plugin.v1.ServeRequest.HeadersEntry.value:type_name -> pacenote.plugin.v1.HeaderValues
-	7,  // 7: pacenote.plugin.v1.ServeResponse.HeadersEntry.value:type_name -> pacenote.plugin.v1.HeaderValues
-	0,  // 8: pacenote.plugin.v1.Plugin.Settings:input_type -> pacenote.plugin.v1.SettingsRequest
-	2,  // 9: pacenote.plugin.v1.Plugin.Notify:input_type -> pacenote.plugin.v1.NotifyRequest
-	4,  // 10: pacenote.plugin.v1.Plugin.Answer:input_type -> pacenote.plugin.v1.AnswerRequest
-	6,  // 11: pacenote.plugin.v1.Plugin.Serve:input_type -> pacenote.plugin.v1.ServeRequest
-	1,  // 12: pacenote.plugin.v1.Plugin.Settings:output_type -> pacenote.plugin.v1.SettingsResponse
-	3,  // 13: pacenote.plugin.v1.Plugin.Notify:output_type -> pacenote.plugin.v1.NotifyResponse
-	5,  // 14: pacenote.plugin.v1.Plugin.Answer:output_type -> pacenote.plugin.v1.AnswerResponse
-	9,  // 15: pacenote.plugin.v1.Plugin.Serve:output_type -> pacenote.plugin.v1.ServeResponse
-	12, // [12:16] is the sub-list for method output_type
-	8,  // [8:12] is the sub-list for method input_type
+	12, // 0: pacenote.plugin.v1.NotifyRequest.secrets:type_name -> pacenote.plugin.v1.NotifyRequest.SecretsEntry
+	13, // 1: pacenote.plugin.v1.AnswerRequest.secrets:type_name -> pacenote.plugin.v1.AnswerRequest.SecretsEntry
+	14, // 2: pacenote.plugin.v1.ServeRequest.headers:type_name -> pacenote.plugin.v1.ServeRequest.HeadersEntry
+	10, // 3: pacenote.plugin.v1.ServeRequest.caller:type_name -> pacenote.plugin.v1.Caller
+	15, // 4: pacenote.plugin.v1.ServeRequest.secrets:type_name -> pacenote.plugin.v1.ServeRequest.SecretsEntry
+	16, // 5: pacenote.plugin.v1.ServeResponse.headers:type_name -> pacenote.plugin.v1.ServeResponse.HeadersEntry
+	9,  // 6: pacenote.plugin.v1.ServeRequest.HeadersEntry.value:type_name -> pacenote.plugin.v1.HeaderValues
+	9,  // 7: pacenote.plugin.v1.ServeResponse.HeadersEntry.value:type_name -> pacenote.plugin.v1.HeaderValues
+	2,  // 8: pacenote.plugin.v1.Plugin.Settings:input_type -> pacenote.plugin.v1.SettingsRequest
+	4,  // 9: pacenote.plugin.v1.Plugin.Notify:input_type -> pacenote.plugin.v1.NotifyRequest
+	6,  // 10: pacenote.plugin.v1.Plugin.Answer:input_type -> pacenote.plugin.v1.AnswerRequest
+	8,  // 11: pacenote.plugin.v1.Plugin.Serve:input_type -> pacenote.plugin.v1.ServeRequest
+	0,  // 12: pacenote.plugin.v1.Host.Ask:input_type -> pacenote.plugin.v1.HostAskRequest
+	3,  // 13: pacenote.plugin.v1.Plugin.Settings:output_type -> pacenote.plugin.v1.SettingsResponse
+	5,  // 14: pacenote.plugin.v1.Plugin.Notify:output_type -> pacenote.plugin.v1.NotifyResponse
+	7,  // 15: pacenote.plugin.v1.Plugin.Answer:output_type -> pacenote.plugin.v1.AnswerResponse
+	11, // 16: pacenote.plugin.v1.Plugin.Serve:output_type -> pacenote.plugin.v1.ServeResponse
+	1,  // 17: pacenote.plugin.v1.Host.Ask:output_type -> pacenote.plugin.v1.HostAskResponse
+	13, // [13:18] is the sub-list for method output_type
+	8,  // [8:13] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -833,9 +959,9 @@ func file_plugin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_plugin_proto_rawDesc), len(file_plugin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   17,
 			NumExtensions: 0,
-			NumServices:   1,
+			NumServices:   2,
 		},
 		GoTypes:           file_plugin_proto_goTypes,
 		DependencyIndexes: file_plugin_proto_depIdxs,

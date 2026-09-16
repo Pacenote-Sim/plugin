@@ -1,4 +1,4 @@
-// The Pacenote plugin contract, version 1.
+// The Pacenote plugin contract, version 3.
 //
 // A plugin is a separate process. The host starts it, hands it a handshake on
 // standard output, and speaks gRPC to it over a local socket. Everything below
@@ -52,7 +52,34 @@ service Plugin {
 
 // SettingsRequest is empty. What a plugin needs configured cannot depend on the
 // configuration, or a fresh installation would have no way in.
-message SettingsRequest {}
+// Host is the server, as a plugin may address it. It is served by the server
+// process over go-plugin's broker, one instance per plugin, so the server
+// always knows which plugin is asking without being told.
+service Host {
+  // Ask puts a question to another plugin and waits. The kind names the
+  // plugin that answers it — "drivers.lookup" is answered by drivers — and
+  // the payload is whatever the two plugins agreed on; the server does not
+  // read it. Hops is how many plugins the question has already passed
+  // through, so a loop is refused rather than run until something breaks.
+  rpc Ask(HostAskRequest) returns (HostAskResponse);
+}
+
+message HostAskRequest {
+  string kind = 1;
+  bytes payload = 2;
+  uint32 hops = 3;
+}
+
+message HostAskResponse {
+  bytes payload = 1;
+}
+
+message SettingsRequest {
+  // host_broker_id is where the plugin reaches the Host service above, on the
+  // broker go-plugin opened between the two processes. Zero means the host
+  // offers none, and a plugin that asks finds nobody to ask.
+  uint32 host_broker_id = 1;
+}
 
 // SettingsResponse carries a JSON array of Setting.
 message SettingsResponse {

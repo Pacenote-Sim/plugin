@@ -2,8 +2,8 @@
   "name": "payments",
   "version": "1.0.0",
   "author": "Pacenote",
-  "description": "Takes subscriptions for a league, and shows the operator who has paid.",
-  "interface_version": 1,
+  "description": "Takes subscriptions for a team, checks the driver is one of yours, and shows the operator who has paid.",
+  "interface_version": 3,
   "binary": "payments",
   "capabilities": {
     "network": true,
@@ -12,9 +12,18 @@
     "http": {
       "title": "Payments",
       "routes": [
-        { "path": "/webhook", "access": "public" },
-        { "path": "/", "access": "admin" }
+        {
+          "path": "/webhook",
+          "access": "public"
+        },
+        {
+          "path": "/",
+          "access": "admin"
+        }
       ]
-    }
+    },
+    "asks": [
+      "drivers"
+    ]
   }
 }

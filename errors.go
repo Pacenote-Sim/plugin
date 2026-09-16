@@ -35,4 +35,14 @@ var (
 	// for a database it did not declare — so a plugin should treat it as fatal
 	// at startup rather than carrying on without one.
 	ErrNoDatabase = errors.New("plugin: no database")
+	// ErrNotAllowed is a plugin asking for something its manifest did not
+	// declare it asks for: a target it did not name, or a question that has
+	// already passed through as many plugins as a question may. The manifest
+	// is the operator's view of what a plugin does, so what is not in it is
+	// refused rather than quietly allowed.
+	ErrNotAllowed = errors.New("plugin: not allowed")
+	// ErrUnavailable is the plugin that would have answered not being there:
+	// not installed, not running, or switched off. The asker falls back; it
+	// is not the asker's fault and not something to retry in a loop.
+	ErrUnavailable = errors.New("plugin: not available")
 )

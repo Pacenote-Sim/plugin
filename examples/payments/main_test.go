@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"testing"
@@ -184,6 +186,10 @@ func TestTheManifestMatchesWhatThisServes(t *testing.T) {
 	access, ok = routes.For("/refunds")
 	r.True(ok)
 	r.Equal(plugin.AccessAdmin, access, "a page beside the others was left public")
+
+	// And it says who it asks, so the operator reads it before installing.
+	r.Equal([]string{"drivers"}, m.Capabilities.Asks)
+	r.True(m.Capabilities.MayAsk("drivers"))
 }
 
 // The page before the operator has named a plan. It says something rather than
@@ -202,9 +208,9 @@ func TestTheOperatorsPageBeforeTheyNamedAPlan(t *testing.T) {
 	r.Contains(string(res.Body), "Season pass")
 }
 
-// The three calls this plugin answers because the interface has them, not
-// because it does anything with them. A plugin that serves pages still has to
-// be a plugin.
+// The two calls this plugin answers because the interface has them, not because
+// it does anything with them. A plugin that serves pages still has to be a
+// plugin — and it does not answer anybody, so it is not an Answerer at all.
 func TestWhatThisPluginDoesWithTheRestOfTheInterface(t *testing.T) {
 	t.Parallel()
 	r := require.New(t)
@@ -218,8 +224,85 @@ func TestWhatThisPluginDoesWithTheRestOfTheInterface(t *testing.T) {
 	r.NoError(err)
 	r.Zero(use.Total(), "a plugin that spends nothing reported a cost")
 
-	// It is not a plugin anybody asks for a sentence, and it says so rather
-	// than answering with an empty one.
-	_, err = payments{}.Answer(t.Context(), plugin.Request{ID: "r1", Kind: plugin.RequestSpeak, Text: "x"})
-	r.ErrorIs(err, plugin.ErrNoAnswer)
+	var p any = payments{}
+	_, answers := p.(plugin.Answerer)
+	r.False(answers, "nobody asks this plugin anything, and it does not pretend otherwise")
+	_, asks := p.(plugin.Asker)
+	r.True(asks, "it asks the drivers plugin, so it has to be connectable")
+}
+
+// fakeHost stands in for the server: it answers drivers.lookup however the test
+// says, and remembers what it was asked.
+type fakeHost struct {
+	answer func(kind string, payload json.RawMessage) (json.RawMessage, error)
+	asked  []string
+}
+
+func (h *fakeHost) Ask(_ context.Context, kind string, payload json.RawMessage) (json.RawMessage, error) {
+	h.asked = append(h.asked, kind)
+	return h.answer(kind, payload)
+}
+
+// The question this plugin asks, and what it does with each answer. These are
+// not parallel: the host is a package variable, handed over once at start.
+func TestAPaymentIsCheckedAgainstTheDriversPlugin(t *testing.T) { //nolint:paralleltest // the connected host is process-wide, as it is in a real plugin.
+	body := []byte(`{"paid":true,"slug":"ana-ruiz"}`)
+
+	cases := []struct {
+		name   string
+		answer func(kind string, payload json.RawMessage) (json.RawMessage, error)
+		want   int
+		text   string
+	}{
+		{
+			name: "a driver the team knows is taken",
+			answer: func(_ string, payload json.RawMessage) (json.RawMessage, error) {
+				require.JSONEq(t, `{"slug":"ana-ruiz"}`, string(payload), "the question is the slug the payment named")
+				return json.RawMessage(`{"known":true,"name":"Ana Ruiz"}`), nil
+			},
+			want: http.StatusOK, text: "taken",
+		},
+		{
+			name:   "a driver nobody knows is ignored, and the provider is told so",
+			answer: func(string, json.RawMessage) (json.RawMessage, error) { return json.RawMessage(`{"known":false}`), nil },
+			want:   http.StatusOK, text: "ignored: no driver called ana-ruiz",
+		},
+		{
+			name:   "no drivers plugin to ask: taken, and said to be unchecked",
+			answer: func(string, json.RawMessage) (json.RawMessage, error) { return nil, plugin.ErrUnavailable },
+			want:   http.StatusOK, text: "unchecked",
+		},
+		{
+			name:   "a drivers plugin that fell over: the provider is asked to try again",
+			answer: func(string, json.RawMessage) (json.RawMessage, error) { return nil, errors.New("it fell over") },
+			want:   http.StatusServiceUnavailable, text: "did not answer",
+		},
+	}
+	for _, tc := range cases { //nolint:paralleltest // the connected host is process-wide, as it is in a real plugin.
+		t.Run(tc.name, func(t *testing.T) {
+			r := require.New(t)
+			host := &fakeHost{answer: tc.answer}
+			payments{}.Connected(host)
+
+			res, err := payments{}.ServeHTTP(t.Context(), signed(t, "the-providers-secret", body))
+			r.NoError(err)
+			r.Equal(tc.want, res.Status, string(res.Body))
+			r.Contains(string(res.Body), tc.text)
+			r.Equal([]string{"drivers.lookup"}, host.asked, "one question, to the plugin whose name is in it")
+		})
+	}
+
+	t.Run("a payment that names no driver is not checked", func(t *testing.T) {
+		r := require.New(t)
+		host := &fakeHost{answer: func(string, json.RawMessage) (json.RawMessage, error) {
+			r.Fail("nothing to ask about")
+			return nil, nil
+		}}
+		payments{}.Connected(host)
+
+		res, err := payments{}.ServeHTTP(t.Context(), signed(t, "the-providers-secret", []byte(`{"paid":true}`)))
+		r.NoError(err)
+		r.Equal(http.StatusOK, res.Status)
+		r.Empty(host.asked)
+	})
 }

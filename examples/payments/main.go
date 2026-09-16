@@ -11,6 +11,10 @@
 // which addresses this plugin serves and who may reach each, the host enforces
 // it before anything is forwarded, and an address the manifest does not list
 // never arrives at all. What is left is the part only this plugin can do.
+//
+// It also asks another plugin something. A payment names a driver, and whether
+// that driver is one of the team's is the drivers plugin's to say — so this one
+// asks it, through the server, and its manifest says so: "asks": ["drivers"].
 package main
 
 import (
@@ -18,10 +22,13 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/pacenote-sim/plugin"
 )
@@ -37,6 +44,21 @@ const (
 func main() { plugin.Serve(payments{}) }
 
 type payments struct{}
+
+// The host this plugin asks through, from Connected. It is a package variable
+// because payments is a value and the host arrives once, at start.
+var (
+	hostMu  sync.Mutex
+	theHost plugin.Host
+)
+
+// Connected keeps the host. The manifest declares "asks": ["drivers"], which is
+// why the server offers one.
+func (p payments) Connected(h plugin.Host) {
+	hostMu.Lock()
+	defer hostMu.Unlock()
+	theHost = h
+}
 
 func (p payments) Settings(context.Context) ([]plugin.Setting, error) {
 	return []plugin.Setting{
@@ -58,14 +80,10 @@ func (p payments) Settings(context.Context) ([]plugin.Setting, error) {
 	}, nil
 }
 
-// This plugin wants no events and answers no requests. It exists to serve two
-// addresses, which is a whole plugin on its own.
+// This plugin wants no events and answers nobody. It exists to serve two
+// addresses and to ask one question, which is a whole plugin on its own.
 func (p payments) Notify(context.Context, plugin.Event) (plugin.Usage, error) {
 	return plugin.Usage{}, nil
-}
-
-func (p payments) Answer(context.Context, plugin.Request) (plugin.Response, error) {
-	return plugin.Response{}, plugin.ErrNoAnswer
 }
 
 // ServeHTTP answers both addresses.
@@ -91,7 +109,7 @@ func (p payments) ServeHTTP(ctx context.Context, r plugin.HTTPRequest) (plugin.H
 //
 // The comparison is constant-time. A signature check that returns early on the
 // first wrong byte tells an attacker how much of their guess was right.
-func (p payments) webhook(_ context.Context, r plugin.HTTPRequest) (plugin.HTTPResponse, error) {
+func (p payments) webhook(ctx context.Context, r plugin.HTTPRequest) (plugin.HTTPResponse, error) {
 	secret, ok := r.Secrets.Get(settingSecret)
 	if !ok {
 		// Not configured. Answering 503 rather than 200 matters: a provider
@@ -106,9 +124,59 @@ func (p payments) webhook(_ context.Context, r plugin.HTTPRequest) (plugin.HTTPR
 		return plugin.Text(http.StatusUnauthorized, "That is not signed by the payment provider."), nil
 	}
 
+	// The payment names a driver, and whether they are one of the team's is
+	// not this plugin's to know: the drivers plugin knows. Ask it.
+	var payment struct {
+		Slug string `json:"slug"`
+	}
+	_ = json.Unmarshal(r.Body, &payment)
+	if payment.Slug != "" {
+		known, err := p.driverKnown(ctx, payment.Slug)
+		switch {
+		case errors.Is(err, plugin.ErrUnavailable), errors.Is(err, plugin.ErrNotAllowed):
+			// No drivers plugin to ask, or this one was not allowed to. The
+			// payment is real either way; say plainly that it was not checked.
+			return plugin.Text(http.StatusOK, "taken, unchecked: no drivers plugin answered"), nil
+		case err != nil:
+			// The provider will send it again, which is what 503 asks for. The
+			// error is answered, not returned: a webhook that errors is a
+			// webhook the host answers 500 for, and 500 says the wrong thing.
+			return plugin.Text(http.StatusServiceUnavailable, "The drivers plugin did not answer; try again."), nil //nolint:nilerr // answered as a status, on purpose.
+		case !known:
+			return plugin.Text(http.StatusOK, "ignored: no driver called "+payment.Slug+" on this team"), nil
+		}
+	}
+
 	// A real one would record the payment in this plugin's own tables, which
 	// it has because its manifest asked for a database.
 	return plugin.Text(http.StatusOK, "taken"), nil
+}
+
+// driverKnown asks the drivers plugin whether it knows this slug. The shape of
+// the question and the answer are the drivers plugin's, documented beside it;
+// the server carried them and read neither.
+func (p payments) driverKnown(ctx context.Context, slug string) (bool, error) {
+	hostMu.Lock()
+	host := theHost
+	hostMu.Unlock()
+	if host == nil {
+		return false, plugin.ErrUnavailable
+	}
+	question, err := json.Marshal(map[string]string{"slug": slug})
+	if err != nil {
+		return false, err
+	}
+	out, err := host.Ask(ctx, "drivers.lookup", question)
+	if err != nil {
+		return false, err
+	}
+	var answer struct {
+		Known bool `json:"known"`
+	}
+	if err := json.Unmarshal(out, &answer); err != nil {
+		return false, fmt.Errorf("the drivers plugin answered something this plugin cannot read: %w", err)
+	}
+	return answer.Known, nil
 }
 
 // page is the operator's own. Only an administrator of this server reaches it,

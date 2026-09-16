@@ -3,11 +3,18 @@
   "version": "1.0.0",
   "author": "Pacenote",
   "description": "Exercises every part of the plugin contract and does nothing useful.",
-  "interface_version": 1,
+  "interface_version": 3,
   "binary": "testplugin",
   "capabilities": {
-    "events": ["lap.completed", "stint.finished"],
-    "requests": ["cue.race", "cue.training", "debrief", "setup"],
+    "events": [
+      "lap.completed",
+      "stint.finished"
+    ],
+    "requests": [
+      "testplugin.echo",
+      "testplugin.ask",
+      "testplugin.chain"
+    ],
     "network": false,
     "writes_files": false,
     "reads_driver_data": true

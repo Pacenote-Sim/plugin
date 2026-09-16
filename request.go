@@ -1,96 +1,96 @@
 package plugin
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 )
 
-// RequestKind names something the host wants back.
+// RequestKind names what is being asked for.
+//
+// It is an open vocabulary. A plugin that answers declares its kinds in its
+// manifest, and each is spelled "<its name>.<what>" — "drivers.lookup" is
+// answered by the plugin called drivers — so the kind says who answers it, two
+// plugins cannot collide, and neither the host nor this contract has to know
+// what any of them mean.
 type RequestKind string
 
-// The requests version 1 carries: the four jobs a coaching plugin does, and one
-// a voice plugin does.
-const (
-	// RequestCueRace is one spoken line about position and the gaps either
-	// side, under twelve words, wanted inside two seconds.
-	RequestCueRace RequestKind = "cue.race"
-	// RequestCueTraining is one spoken line about the corner the driver lost
-	// the most in and one fix, under eighteen words, wanted inside two seconds.
-	RequestCueTraining RequestKind = "cue.training"
-	// RequestDebrief is a few hundred written words after a session, wanted
-	// inside thirty.
-	RequestDebrief RequestKind = "debrief"
-	// RequestSetup is setup advice: a list of changes with a reason each.
-	RequestSetup RequestKind = "setup"
-	// RequestSpeak turns one line into audio a driver hears. It is the only
-	// request whose answer is bytes rather than language, and it is the one
-	// with the least room: the line was written because a corner is coming.
-	//
-	// The text is in [Request.Text] and the answer in [Response.Audio]. A
-	// plugin answering this holds the credential for whatever service it uses;
-	// the server relays what comes back and knows nothing about the vendor.
-	RequestSpeak RequestKind = "speak"
-)
-
-// Valid reports whether k is a request this version defines.
-func (k RequestKind) Valid() bool {
-	switch k {
-	case RequestCueRace, RequestCueTraining, RequestDebrief, RequestSetup, RequestSpeak:
-		return true
-	default:
-		return false
+// Plugin is the name of the plugin that answers this kind: the part before the
+// first dot, or empty when there is none.
+func (k RequestKind) Plugin() string {
+	name, _, ok := strings.Cut(string(k), ".")
+	if !ok {
+		return ""
 	}
+	return name
 }
 
-// Request is the host asking a plugin for something and waiting.
+// Valid reports whether k is spelled the way a kind has to be: a plugin name, a
+// dot, and a word — lowercase letters, digits, underscores and hyphens on both
+// sides, and something on both sides.
+func (k RequestKind) Valid() bool {
+	name, what, ok := strings.Cut(string(k), ".")
+	return ok && validName(name) && validWord(what)
+}
+
+// validWord is the part of a kind after the dot: the same alphabet as a plugin
+// name, and dots allowed so a plugin can group its kinds.
+func validWord(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '_', c == '-', c == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// MaxHops is the most plugins a question may pass through. A asking B is one
+// hop; B asking C while it answers is two. A plugin that asks itself, or two
+// that ask each other, run into this rather than into the host's memory.
+const MaxHops = 3
+
+// Request is one plugin asking another for something, through the host, with
+// the asker waiting.
 //
-// It is the other half of [Event] and the reason this interface is not just a
-// notification bus: coaching returns a line the server stores and the client
-// speaks, and setup advice returns changes the server files against a car and a
-// circuit.
-//
-// The deadline is real. It is on the context the plugin is called with, and a
-// plugin that misses it is skipped, reported, and the caller told there was no
-// answer so it can use its own fallback. Nothing is queued for a retry: a cue
-// that arrives after the corner is worse than no cue.
+// The host puts it. It stamps From — the asker's word is never taken for who
+// it is — checks the asker declared the target, checks the target declared the
+// kind, applies the target's daily cap and the deadline, and hands over the
+// payload without reading it. What is in the payload is between the two
+// plugins, the way what is in a corner document is between a client and the
+// plugin that reads it.
 type Request struct {
 	// ID is unique to this call, for the plugin's own logging and cache.
 	ID string `json:"id"`
-	// Kind is what is wanted.
+	// Kind is what is wanted, spelled "<this plugin's name>.<what>".
 	Kind RequestKind `json:"kind"`
+	// From is the plugin that asked, as the host knows it. It is the host's
+	// word and cannot be set by the asker.
+	From string `json:"from"`
+	// Hops is how many plugins this question has already passed through,
+	// counting the asker. A plugin answering it that asks something else in
+	// turn does not have to add to it: the host counts.
+	Hops int `json:"hops,omitempty"`
 	// Deadline is when the host stops waiting. It is also the deadline on the
-	// context, and it is repeated here so that a plugin deciding between a
-	// fast model and a good one has the number without having to ask the
-	// context for it.
+	// context, repeated here so a plugin deciding how hard to try has the
+	// number without asking the context for it.
 	Deadline time.Time `json:"deadline"`
-	// Driver and Session are who and where.
-	Driver  Driver  `json:"driver"`
-	Session Session `json:"session"`
-	// Lap is the lap in question, for the two cue jobs.
-	Lap *LapFacts `json:"lap,omitempty"`
-	// Stint is the stint in question, for a debrief and for setup advice.
-	Stint *StintFacts `json:"stint,omitempty"`
-	// Symptom is what the car was doing, for [RequestSetup]. It is derived
-	// from the telemetry rather than asked of the driver — steering angle
-	// against lateral acceleration says whether the car turns as much as it is
-	// asked to — but a driver may override it, because they felt it and we did
-	// not. Empty means the plugin should derive its own from the facts.
-	Symptom string `json:"symptom,omitempty"`
-	// Text is what to say, for [RequestSpeak]. It is the line a coach already
-	// wrote and a validator already passed, so a plugin speaking it neither
-	// edits it nor decides whether it should be said.
-	//
-	// Voice is which voice to use, when the caller has a preference. It is the
-	// plugin's own identifier for one — a service's voice id — and an empty
-	// string is the operator's configured default.
-	Text  string `json:"text,omitempty"`
-	Voice string `json:"voice,omitempty"`
-
-	// Settings, Secrets and TokenCeiling are as on [Event].
-	Settings     Values  `json:"-"`
-	Secrets      Secrets `json:"-"`
-	TokenCeiling int     `json:"token_ceiling,omitempty"`
+	// Payload is the question, in whatever shape this kind takes. It is a
+	// document and not a struct so that this contract does not have to know.
+	Payload json.RawMessage `json:"payload,omitempty"`
+	// Settings and Secrets are the answering plugin's own configuration, on
+	// the same terms as every other call.
+	Settings Values  `json:"-"`
+	Secrets  Secrets `json:"-"`
+	// TokenCeiling is the most this call may spend, or zero for no ceiling
+	// beyond the operator's daily cap.
+	TokenCeiling int `json:"token_ceiling,omitempty"`
 }
 
 // Validate refuses a request a plugin cannot answer.
@@ -99,99 +99,60 @@ func (r Request) Validate() error {
 	case r.ID == "":
 		return fmt.Errorf("%w: a request with no id cannot be traced", ErrInvalid)
 	case !r.Kind.Valid():
-		return fmt.Errorf("%w: %q is not a request this interface version carries", ErrInvalid, r.Kind)
-	case (r.Kind == RequestCueRace || r.Kind == RequestCueTraining) && r.Lap == nil:
-		return fmt.Errorf("%w: a %s with no lap facts has nothing to say", ErrInvalid, r.Kind)
-	case r.Kind == RequestSpeak && strings.TrimSpace(r.Text) == "":
-		return fmt.Errorf("%w: a speak request carries no text, so there is nothing to say", ErrInvalid)
-	case (r.Kind == RequestDebrief || r.Kind == RequestSetup) && r.Stint == nil:
-		return fmt.Errorf("%w: a %s with no stint facts has nothing to say", ErrInvalid, r.Kind)
+		return fmt.Errorf("%w: %q is not a request kind — spell it <plugin>.<what>", ErrInvalid, r.Kind)
+	case r.From == "":
+		return fmt.Errorf("%w: a request from nobody cannot be answered", ErrInvalid)
+	case r.Hops > MaxHops:
+		return fmt.Errorf("%w: a request that has passed through %d plugins has gone round in a circle", ErrInvalid, r.Hops)
+	case len(r.Payload) > 0 && !json.Valid(r.Payload):
+		return fmt.Errorf("%w: the payload is not JSON", ErrInvalid)
 	default:
 		return nil
 	}
 }
 
-// Direction is which way a setup change goes.
-type Direction string
-
-// The directions a change can take. They are named rather than signed numbers
-// because "stiffer" and "more" are what an operator reads in the panel, and a
-// plugin that returns +1 is asking a human to remember a convention.
-const (
-	DirectionMore     Direction = "more"
-	DirectionLess     Direction = "less"
-	DirectionStiffer  Direction = "stiffer"
-	DirectionSofter   Direction = "softer"
-	DirectionHigher   Direction = "higher"
-	DirectionLower    Direction = "lower"
-	DirectionForward  Direction = "forward"
-	DirectionRearward Direction = "rearward"
-)
-
-// SetupChange is one thing to change on the car.
-type SetupChange struct {
-	// Area is the part of the car — "front suspension", "differential".
-	Area string `json:"area"`
-	// Setting is the control on the setup sheet, spelled the way the
-	// simulator spells it, so a driver can find it.
-	Setting string `json:"setting"`
-	// Direction is which way to move it.
-	Direction Direction `json:"direction"`
-	// Amount is how far, in the units the sheet uses — "one click", "2 mm".
-	// It may be empty when the direction is the whole advice.
-	Amount string `json:"amount,omitempty"`
-	// Why is one line of reason, tied to a fact the plugin was given. A change
-	// with no why is a guess with a confident tone.
-	Why string `json:"why"`
-}
-
-// Response is what a plugin gives back.
+// Response is what the answering plugin gives back.
 type Response struct {
 	// Kind echoes the request, so a caller holding several in flight can tell
 	// them apart without keeping the map.
 	Kind RequestKind `json:"kind"`
-	// Text is the answer for the jobs whose answer is language: a cue, a
-	// debrief. It is checked by the caller against the rules for that job
-	// before anything is spoken, because a prompt is a request and a validator
-	// is a guarantee.
-	Text string `json:"text,omitempty"`
-	// Changes are the answer for [RequestSetup].
-	Changes []SetupChange `json:"changes,omitempty"`
-	// Audio is the answer for [RequestSpeak], and AudioType its media type —
-	// "audio/wav" or "audio/mpeg". The server relays both to the client without
-	// decoding either, so a plugin may answer in whatever its service produces.
-	Audio     []byte `json:"audio,omitempty"`
-	AudioType string `json:"audio_type,omitempty"`
+	// Payload is the answer, in whatever shape this kind takes. Empty is not
+	// an answer — return [ErrNoAnswer] instead — because a caller must be able
+	// to tell "nothing to say" from "here is nothing".
+	Payload json.RawMessage `json:"payload,omitempty"`
 	// Usage is what the call cost. A plugin that leaves this zero is telling
 	// the core it spent nothing, and the core will believe it.
 	Usage Usage `json:"usage"`
-	// PromptVersion is the version of the prompt asset that produced this,
-	// recorded so a change in output can be traced to a change in prompt. It
-	// is free text and it may be empty.
-	PromptVersion string `json:"prompt_version,omitempty"`
 }
 
-// Validate refuses a response the caller cannot use. An answer with no content
-// at all is [ErrNoAnswer] rather than an empty success: a caller that speaks
-// what it is given must be able to tell "nothing to say" from "here is
-// nothing".
+// Validate refuses a response the caller cannot use.
 func (r Response) Validate() error {
 	if err := r.Usage.Validate(); err != nil {
 		return err
 	}
-	if r.Text == "" && len(r.Changes) == 0 && len(r.Audio) == 0 {
+	if len(r.Payload) == 0 {
 		return ErrNoAnswer
 	}
-	if len(r.Audio) > 0 && r.AudioType == "" {
-		return fmt.Errorf("%w: audio came back with no media type, so nothing can play it", ErrInvalid)
-	}
-	for i, c := range r.Changes {
-		switch {
-		case c.Area == "" || c.Setting == "":
-			return fmt.Errorf("%w: change %d names no setting to change", ErrInvalid, i+1)
-		case c.Why == "":
-			return fmt.Errorf("%w: change %d to the %s gives no reason", ErrInvalid, i+1, c.Setting)
-		}
+	if !json.Valid(r.Payload) {
+		return fmt.Errorf("%w: the answer is not JSON", ErrInvalid)
 	}
 	return nil
+}
+
+// hopsKey carries the depth of the question a plugin is answering, so that a
+// question it asks in turn is counted from there rather than from zero.
+type hopsKey struct{}
+
+func withHops(ctx context.Context, hops int) context.Context {
+	return context.WithValue(ctx, hopsKey{}, hops)
+}
+
+// Hops is how many plugins the question being answered in ctx has passed
+// through, or zero outside an answer. A plugin does not need it to ask — the
+// host counts — but one that wants to know how deep it is may read it.
+func Hops(ctx context.Context) int {
+	if n, ok := ctx.Value(hopsKey{}).(int); ok {
+		return n
+	}
+	return 0
 }

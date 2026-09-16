@@ -61,7 +61,8 @@ func TestSecretNeverRenders(t *testing.T) {
 		{name: "inside a request encoded as JSON", show: func(s plugin.Secret) string {
 			b, err := json.Marshal(plugin.Request{
 				ID:      "r1",
-				Kind:    plugin.RequestCueRace,
+				Kind:    "coach.cue",
+				From:    "host",
 				Secrets: plugin.Secrets{"api_key": s},
 			})
 			if err != nil {
@@ -212,7 +213,7 @@ func TestACredentialCannotBePrintedByAccident(t *testing.T) {
 		"%+v on the map":    fmt.Sprintf("%+v", many),
 		"%#v on the map":    fmt.Sprintf("%#v", many),
 		"json, the map":     asJSON(many),
-		"json, a request":   asJSON(plugin.Request{ID: "r1", Kind: plugin.RequestSpeak, Text: "x", Secrets: many}),
+		"json, a request":   asJSON(plugin.Request{ID: "r1", Kind: "voice.speak", From: "host", Payload: json.RawMessage(`"x"`), Secrets: many}),
 		"json, an event":    asJSON(plugin.Event{Kind: plugin.EventLapCompleted, Secrets: many}),
 		"json, an http req": asJSON(plugin.HTTPRequest{Method: "GET", Path: "/", Secrets: many}),
 		"slog":              logged.String(),

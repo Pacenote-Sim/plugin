@@ -1,0 +1,15 @@
+{
+  "name": "drivers",
+  "version": "1.0.0",
+  "author": "Pacenote",
+  "description": "Knows which drivers are on this team, and answers other plugins that ask.",
+  "interface_version": 3,
+  "binary": "drivers",
+  "capabilities": {
+    "requests": [
+      "drivers.lookup",
+      "drivers.list"
+    ],
+    "reads_driver_data": true
+  }
+}

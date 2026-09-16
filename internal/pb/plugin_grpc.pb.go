@@ -1,4 +1,4 @@
-// The Pacenote plugin contract, version 1.
+// The Pacenote plugin contract, version 3.
 //
 // A plugin is a separate process. The host starts it, hands it a handshake on
 // standard output, and speaks gRPC to it over a local socket. Everything below
@@ -287,6 +287,130 @@ var Plugin_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Serve",
 			Handler:    _Plugin_Serve_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "plugin.proto",
+}
+
+const (
+	Host_Ask_FullMethodName = "/pacenote.plugin.v1.Host/Ask"
+)
+
+// HostClient is the client API for Host service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// SettingsRequest is empty. What a plugin needs configured cannot depend on the
+// configuration, or a fresh installation would have no way in.
+// Host is the server, as a plugin may address it. It is served by the server
+// process over go-plugin's broker, one instance per plugin, so the server
+// always knows which plugin is asking without being told.
+type HostClient interface {
+	// Ask puts a question to another plugin and waits. The kind names the
+	// plugin that answers it — "drivers.lookup" is answered by drivers — and
+	// the payload is whatever the two plugins agreed on; the server does not
+	// read it. Hops is how many plugins the question has already passed
+	// through, so a loop is refused rather than run until something breaks.
+	Ask(ctx context.Context, in *HostAskRequest, opts ...grpc.CallOption) (*HostAskResponse, error)
+}
+
+type hostClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewHostClient(cc grpc.ClientConnInterface) HostClient {
+	return &hostClient{cc}
+}
+
+func (c *hostClient) Ask(ctx context.Context, in *HostAskRequest, opts ...grpc.CallOption) (*HostAskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HostAskResponse)
+	err := c.cc.Invoke(ctx, Host_Ask_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// HostServer is the server API for Host service.
+// All implementations must embed UnimplementedHostServer
+// for forward compatibility.
+//
+// SettingsRequest is empty. What a plugin needs configured cannot depend on the
+// configuration, or a fresh installation would have no way in.
+// Host is the server, as a plugin may address it. It is served by the server
+// process over go-plugin's broker, one instance per plugin, so the server
+// always knows which plugin is asking without being told.
+type HostServer interface {
+	// Ask puts a question to another plugin and waits. The kind names the
+	// plugin that answers it — "drivers.lookup" is answered by drivers — and
+	// the payload is whatever the two plugins agreed on; the server does not
+	// read it. Hops is how many plugins the question has already passed
+	// through, so a loop is refused rather than run until something breaks.
+	Ask(context.Context, *HostAskRequest) (*HostAskResponse, error)
+	mustEmbedUnimplementedHostServer()
+}
+
+// UnimplementedHostServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedHostServer struct{}
+
+func (UnimplementedHostServer) Ask(context.Context, *HostAskRequest) (*HostAskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Ask not implemented")
+}
+func (UnimplementedHostServer) mustEmbedUnimplementedHostServer() {}
+func (UnimplementedHostServer) testEmbeddedByValue()              {}
+
+// UnsafeHostServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to HostServer will
+// result in compilation errors.
+type UnsafeHostServer interface {
+	mustEmbedUnimplementedHostServer()
+}
+
+func RegisterHostServer(s grpc.ServiceRegistrar, srv HostServer) {
+	// If the following call panics, it indicates UnimplementedHostServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&Host_ServiceDesc, srv)
+}
+
+func _Host_Ask_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HostAskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HostServer).Ask(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Host_Ask_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HostServer).Ask(ctx, req.(*HostAskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Host_ServiceDesc is the grpc.ServiceDesc for Host service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Host_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "pacenote.plugin.v1.Host",
+	HandlerType: (*HostServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Ask",
+			Handler:    _Host_Ask_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

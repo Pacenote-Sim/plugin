@@ -15,18 +15,17 @@
 //
 // # What a plugin can do
 //
-// Five things, which are the five a demanding plugin — a coach that turns
-// telemetry into a sentence a driver hears mid-corner — actually needs:
-//
 //   - Be told something happened. [Event], fire and forget.
-//   - Be asked for something, with the host waiting. [Request] and [Response].
+//   - Ask another plugin for something and wait. [Host.Ask], through the server.
+//   - Be asked by another plugin, with it waiting. [Request] and [Response].
 //   - Be lent one of the operator's credentials for a call. [Secret].
 //   - Report what a call cost. [Usage]. The daily cap belongs to the core.
 //   - Declare what the operator must configure. [Setting].
+//   - Keep tables of its own. [Capabilities.Database].
+//   - Serve pages and endpoints of its own. [Server], under /plugin/<name>/.
 //
-// Nothing else is here yet. Serving an endpoint, adding a page to the panel and
-// enriching data on the way in are in the plan and are not in version 1,
-// because an extension point with no user is a guess.
+// The server itself never asks a plugin anything. It tells plugins what
+// happened, serves their pages, and carries their questions to each other.
 //
 // # The governing rule
 //
@@ -52,7 +51,7 @@
 //	  "version": "1.0.0",
 //	  "author": "Someone",
 //	  "description": "Says something in the team channel when a driver sets a personal best.",
-//	  "interface_version": 1,
+//	  "interface_version": 3,
 //	  "capabilities": {
 //	    "events": ["lap.completed"],
 //	    "network": true,
@@ -119,16 +118,37 @@
 //		return plugin.Usage{}, nil
 //	}
 //
-//	// Answer is not something this plugin does, and its manifest says so.
-//	func (loudmouth) Answer(context.Context, plugin.Request) (plugin.Response, error) {
-//		return plugin.Response{}, plugin.ErrUnsupported
-//	}
-//
 //	func main() { plugin.Serve(loudmouth{}) }
 //
 // Note what is not in that program: no configuration file, no place a
 // credential is stored, no decision about how much of the operator's money to
 // spend. The core owns all three.
+//
+// # Asking another plugin
+//
+// A plugin asks another one through the server, never directly. The asker
+// implements [Asker] and is handed a [Host] when it starts; the answerer
+// implements [Answerer] and declares the kinds it answers in its manifest, each
+// spelled with its own name — "drivers.lookup" is answered by drivers. The
+// asker's manifest names the plugins it asks, so an operator reads "payments
+// asks drivers for information" before installing it.
+//
+//	type payments struct{ host plugin.Host }
+//
+//	func (p *payments) Connected(h plugin.Host) { p.host = h }
+//
+//	func (p *payments) webhook(ctx context.Context, slug string) error {
+//		out, err := p.host.Ask(ctx, "drivers.lookup", json.RawMessage(`{"slug":"`+slug+`"}`))
+//		...
+//	}
+//
+// The server checks that the asker declared the target and that the target
+// declared the kind, charges the target's daily cap, applies the deadline, stamps
+// who asked, and hands the payload over without reading it. A question may
+// pass through at most [MaxHops] plugins, so two that ask each other stop
+// rather than run until something breaks. The errors an asker can meet are the
+// contract's own: [ErrNotAllowed], [ErrUnavailable], [ErrUnsupported],
+// [ErrNoAnswer], [ErrNotConfigured].
 //
 // # Rules a plugin author has to know
 //
@@ -160,7 +180,8 @@
 //
 // # A worked example you can run
 //
-// examples/testplugin is a plugin that exercises all five capabilities and does
-// nothing useful, which is exactly what a host needs to test against. It is
-// worth reading before writing the first real one.
+// examples/testplugin is a plugin that exercises every part of the contract and
+// does nothing useful, which is exactly what a host needs to test against. It is
+// worth reading before writing the first real one. examples/drivers and
+// examples/payments are a pair: the second asks the first.
 package plugin

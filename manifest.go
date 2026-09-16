@@ -27,9 +27,15 @@ type Capabilities struct {
 	// Events are the kinds this plugin wants delivered. The host sends these
 	// and no others.
 	Events []EventKind `json:"events,omitempty"`
-	// Requests are the kinds it will answer. The host refuses to ask for
-	// anything else rather than waiting out a deadline to find out.
+	// Requests are the kinds it will answer, each spelled "<this plugin's
+	// name>.<what>". The host refuses to ask for anything else rather than
+	// waiting out a deadline to find out.
 	Requests []RequestKind `json:"requests,omitempty"`
+	// Asks names the plugins this one asks questions of. It is a declaration
+	// the operator reads at install — "payments asks drivers for information"
+	// — and one the host enforces: a question to a plugin not named here is
+	// refused before it is put.
+	Asks []string `json:"asks,omitempty"`
 	// Network reports that it calls something outside this machine. It is the
 	// declaration that matters most, because it is the one that turns the
 	// operator's data into somebody else's.
@@ -79,6 +85,16 @@ func (c Capabilities) Answers(k RequestKind) bool {
 	return false
 }
 
+// MayAsk reports whether this plugin declared that it asks the named plugin.
+func (c Capabilities) MayAsk(target string) bool {
+	for _, a := range c.Asks {
+		if a == target {
+			return true
+		}
+	}
+	return false
+}
+
 // Describe is the capability list as an operator reads it, one sentence each.
 // It is here rather than in the panel so that every host words it the same way.
 func (c Capabilities) Describe() []string {
@@ -96,6 +112,9 @@ func (c Capabilities) Describe() []string {
 			kinds[i] = string(r)
 		}
 		out = append(out, "Answers: "+strings.Join(kinds, ", "))
+	}
+	if len(c.Asks) > 0 {
+		out = append(out, "Asks "+strings.Join(c.Asks, ", ")+" for information.")
 	}
 	if c.Network {
 		out = append(out, "Calls something outside this machine.")
@@ -132,7 +151,12 @@ func (c Capabilities) Validate() error {
 	}
 	for _, r := range c.Requests {
 		if !r.Valid() {
-			return fmt.Errorf("%w: %q is not a request this server makes", ErrInvalid, r)
+			return fmt.Errorf("%w: %q is not a request kind — spell it <plugin>.<what>", ErrInvalid, r)
+		}
+	}
+	for _, a := range c.Asks {
+		if !validName(a) {
+			return fmt.Errorf("%w: %q is not a plugin name, so it cannot be asked anything", ErrInvalid, a)
 		}
 	}
 	if c.HTTP != nil {
@@ -227,7 +251,23 @@ func (m Manifest) Validate() error {
 	case strings.ContainsAny(m.Binary, `/\`):
 		return fmt.Errorf("%w: the binary of %s must be a file name beside the manifest, not a path", ErrInvalid, m.Name)
 	}
-	return m.Capabilities.Validate()
+	if err := m.Capabilities.Validate(); err != nil {
+		return err
+	}
+	// A plugin's kinds are spelled with its own name, so the kind says who
+	// answers it and two plugins cannot collide; and a plugin does not ask
+	// itself, which is the shortest loop there is.
+	for _, r := range m.Capabilities.Requests {
+		if r.Plugin() != m.Name {
+			return fmt.Errorf("%w: %s cannot answer %q — a plugin's kinds are spelled <its name>.<what>", ErrInvalid, m.Name, r)
+		}
+	}
+	for _, a := range m.Capabilities.Asks {
+		if a == m.Name {
+			return fmt.Errorf("%w: %s declares that it asks itself, which is a loop and not a capability", ErrInvalid, m.Name)
+		}
+	}
+	return nil
 }
 
 // Executable is the file to run, given the directory the manifest was read

@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -50,9 +51,8 @@ func (f *fake) ServeHTTP(ctx context.Context, r HTTPRequest) (HTTPResponse, erro
 // promises a route and the binary cannot serve one.
 type noRoutes struct{}
 
-func (noRoutes) Settings(context.Context) ([]Setting, error)       { return nil, nil }
-func (noRoutes) Notify(context.Context, Event) (Usage, error)      { return Usage{}, nil }
-func (noRoutes) Answer(context.Context, Request) (Response, error) { return Response{}, nil }
+func (noRoutes) Settings(context.Context) ([]Setting, error)  { return nil, nil }
+func (noRoutes) Notify(context.Context, Event) (Usage, error) { return Usage{}, nil }
 
 func (f *fake) Settings(context.Context) ([]Setting, error) { return f.settings, f.settErr }
 
@@ -79,14 +79,22 @@ func (f *fake) Answer(ctx context.Context, r Request) (Response, error) {
 // dial puts impl behind a real gRPC connection and hands back the [Plugin] the
 // host would hold. It is a loopback socket rather than an in-memory pipe so
 // that the encoding is exercised end to end, which is the whole point.
-func dial(t *testing.T, impl Plugin) Plugin {
+// peer is every side of a connection at once, which is what a test wants and
+// what the host's single type has: it is told, asked and served through.
+type peer interface {
+	Plugin
+	Answerer
+	Server
+}
+
+func dial(t *testing.T, impl Plugin) peer {
 	t.Helper()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
 	srv := grpc.NewServer()
-	registerServer(srv, impl)
+	registerServer(srv, impl, nil)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -101,7 +109,9 @@ func dial(t *testing.T, impl Plugin) Plugin {
 		srv.Stop()
 		<-done
 	})
-	return newClient(conn)
+	p, ok := newClient(conn, nil).(peer)
+	require.True(t, ok, "the host's side is told, asked and served through")
+	return p
 }
 
 // TestSettingsCrossTheWire covers the declaration a host reads at startup.
@@ -164,10 +174,8 @@ func TestEventCrossesTheWire(t *testing.T) {
 			Session: Session{StintID: "s-1", Sim: "iracing", Track: "Barcelona", TrackID: "barcelona gp", Car: "296", Type: SessionRace},
 			Lap: &LapFacts{
 				Number: 14, LapMs: 91240, Kind: LapClean, DeltaMs: 840, Reference: "your best lap",
-				Corners: []Corner{{
-					Turn: 4, ApexPct: 312, ApexKmh: 112, ReferenceApexKmh: 121, DeficitKmh: 9,
-					BrakeAtApex: 31, ThrottleLag: 14, Pattern: PatternEarlyApex,
-				}},
+				Corners: json.RawMessage(`[{"turn":4,"apex_pct":312,"apex_kmh":112,"ref_apex_kmh":121,` +
+					`"deficit_kmh":9,"brake_at_apex":31,"throttle_lag":14,"pattern":"early_apex"}]`),
 				Position:  &Position{ClassPos: 3, GapAheadMs: 1240},
 				SpokenLap: "one minute 31.2 seconds",
 			},
@@ -216,59 +224,57 @@ func TestEventCrossesTheWire(t *testing.T) {
 	})
 }
 
-// TestRequestCrossesTheWire is the waiting half.
+// TestRequestCrossesTheWire is the waiting half: one plugin's question, put by
+// the host, answered by another.
 func TestRequestCrossesTheWire(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a line comes back with what it cost", func(t *testing.T) {
+	t.Run("an answer comes back with what it cost", func(t *testing.T) {
 		t.Parallel()
 		r := require.New(t)
 
 		f := &fake{answered: Response{
-			Text:          "Turn 4, more entry speed.",
-			Usage:         Usage{Job: "cue.training", Model: "fast", InputTokens: 300, OutputTokens: 12},
-			PromptVersion: "cue.training/3",
+			Payload: json.RawMessage(`{"known":true,"name":"Ana Ruiz"}`),
+			Usage:   Usage{Job: "drivers.lookup", Model: "none", InputTokens: 300, OutputTokens: 12},
 		}}
 		got, err := dial(t, f).Answer(t.Context(), Request{
-			ID: "r-1", Kind: RequestCueTraining, Lap: &LapFacts{Number: 14},
+			ID: "r-1", Kind: "drivers.lookup", From: "payments", Payload: json.RawMessage(`{"slug":"ana"}`),
 		})
 		r.NoError(err)
-		r.Equal("Turn 4, more entry speed.", got.Text)
-		r.Equal(RequestCueTraining, got.Kind, "the kind is filled in from the request when the plugin leaves it out")
+		r.JSONEq(`{"known":true,"name":"Ana Ruiz"}`, string(got.Payload))
+		r.Equal(RequestKind("drivers.lookup"), got.Kind, "the kind is filled in from the request when the plugin leaves it out")
 		r.Equal(int64(312), got.Usage.Total())
-		r.Equal("cue.training/3", got.PromptVersion)
 	})
 
-	t.Run("setup changes come back whole", func(t *testing.T) {
-		t.Parallel()
-		r := require.New(t)
-
-		want := []SetupChange{{
-			Area: "front suspension", Setting: "anti-roll bar",
-			Direction: DirectionSofter, Amount: "one click", Why: "the front tyres are hotter",
-		}}
-		f := &fake{answered: Response{Kind: RequestSetup, Changes: want}}
-		got, err := dial(t, f).Answer(t.Context(), Request{ID: "r-1", Kind: RequestSetup, Stint: &StintFacts{}})
-		r.NoError(err)
-		r.Equal(want, got.Changes)
-	})
-
-	t.Run("the credential reaches the answer path too", func(t *testing.T) {
+	t.Run("the question arrives as it was asked, sender and all", func(t *testing.T) {
 		t.Parallel()
 		r := require.New(t)
 
 		seen := make(chan Request, 1)
-		f := &fake{lastReq: seen, answered: Response{Text: "ok"}}
+		f := &fake{lastReq: seen, answered: Response{Payload: json.RawMessage(`true`)}}
 		_, err := dial(t, f).Answer(t.Context(), Request{
-			ID: "r-1", Kind: RequestCueRace, Lap: &LapFacts{},
+			ID: "r-1", Kind: "drivers.lookup", From: "payments", Hops: 2,
+			Payload: json.RawMessage(`{"slug":"ana"}`),
 			Secrets: Secrets{"api_key": NewSecret("sk-ant-zzz")},
 		})
 		r.NoError(err)
 
 		got := <-seen
+		r.Equal("payments", got.From)
+		r.Equal(2, got.Hops)
+		r.Equal(`{"slug":"ana"}`, string(got.Payload), "not re-encoded on the way") //nolint:testifylint // byte equality is the point.
 		key, ok := got.Secrets.Get("api_key")
-		r.True(ok)
+		r.True(ok, "the credential reaches the answer path too")
 		r.Equal("sk-ant-zzz", key.Value())
+	})
+
+	t.Run("a plugin that does not answer says so", func(t *testing.T) {
+		t.Parallel()
+		r := require.New(t)
+
+		_, err := dial(t, noRoutes{}).Answer(t.Context(), Request{ID: "r-1", Kind: "quiet.thing", From: "asker"})
+		r.ErrorIs(err, ErrUnsupported)
+		r.ErrorContains(err, "does not answer them")
 	})
 }
 
@@ -289,6 +295,8 @@ func TestSentinelsSurviveTheProcessBoundary(t *testing.T) {
 		{name: "not a job this plugin does", give: ErrUnsupported, want: ErrUnsupported},
 		{name: "the operator has not filled it in", give: ErrNotConfigured, want: ErrNotConfigured},
 		{name: "somebody's mistake", give: ErrInvalid, want: ErrInvalid},
+		{name: "a question the manifest did not allow", give: ErrNotAllowed, want: ErrNotAllowed},
+		{name: "the plugin that would answer is not there", give: ErrUnavailable, want: ErrUnavailable},
 		{
 			name: "the plugin's own words survive",
 			give: errors.New("the vendor answered 429 and would not say when to retry"),
@@ -304,7 +312,7 @@ func TestSentinelsSurviveTheProcessBoundary(t *testing.T) {
 			f := &fake{answer: func(context.Context, Request) (Response, error) {
 				return Response{}, tc.give
 			}}
-			_, err := dial(t, f).Answer(t.Context(), Request{ID: "r", Kind: RequestCueRace, Lap: &LapFacts{}})
+			_, err := dial(t, f).Answer(t.Context(), Request{ID: "r", Kind: "coach.cue", From: "host"})
 			r.Error(err)
 			if tc.want != nil {
 				r.ErrorIs(err, tc.want)
@@ -333,14 +341,14 @@ func TestDeadlineCrossesTheWire(t *testing.T) {
 			case <-release:
 			case <-ctx.Done():
 			}
-			return Response{Text: "too late"}, nil
+			return Response{Payload: json.RawMessage(`"too late"`)}, nil
 		}}
 
 		ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 		defer cancel()
 
 		start := time.Now()
-		_, err := dial(t, f).Answer(ctx, Request{ID: "r", Kind: RequestCueRace, Lap: &LapFacts{}})
+		_, err := dial(t, f).Answer(ctx, Request{ID: "r", Kind: "coach.cue", From: "host"})
 		r.ErrorIs(err, context.DeadlineExceeded)
 		r.Less(time.Since(start), 2*time.Second)
 	})
@@ -353,13 +361,13 @@ func TestDeadlineCrossesTheWire(t *testing.T) {
 		f := &fake{answer: func(ctx context.Context, _ Request) (Response, error) {
 			d, _ := ctx.Deadline()
 			seen <- d
-			return Response{Text: "in time"}, nil
+			return Response{Payload: json.RawMessage(`"in time"`)}, nil
 		}}
 
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 
-		_, err := dial(t, f).Answer(ctx, Request{ID: "r", Kind: RequestCueRace, Lap: &LapFacts{}})
+		_, err := dial(t, f).Answer(ctx, Request{ID: "r", Kind: "coach.cue", From: "host"})
 		r.NoError(err)
 
 		got := <-seen
@@ -561,11 +569,12 @@ func BenchmarkAnEventCrossingTheWire(b *testing.B) {
 }
 
 func BenchmarkARequestCrossingTheWire(b *testing.B) {
-	host := benchHost(b, &fake{answered: Response{Text: "box this lap"}})
+	host := benchHost(b, &fake{answered: Response{Payload: json.RawMessage(`"box this lap"`)}})
 	r := Request{
 		ID:       "r1",
-		Kind:     RequestCueRace,
-		Lap:      &LapFacts{Number: 12, LapMs: 95_400},
+		Kind:     "coach.cue",
+		From:     "host",
+		Payload:  json.RawMessage(`{"lap":12,"lap_ms":95400}`),
 		Settings: Values{"mode": "live"},
 	}
 	b.ReportAllocs()
@@ -616,14 +625,14 @@ func BenchmarkHeadersBothWays(b *testing.B) {
 }
 
 // benchHost is dial for a benchmark, which cannot take a *testing.T.
-func benchHost(b *testing.B, impl Plugin) Plugin {
+func benchHost(b *testing.B, impl Plugin) peer {
 	b.Helper()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(b, err)
 
 	srv := grpc.NewServer()
-	registerServer(srv, impl)
+	registerServer(srv, impl, nil)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -638,5 +647,9 @@ func benchHost(b *testing.B, impl Plugin) Plugin {
 		srv.Stop()
 		<-done
 	})
-	return newClient(conn)
+	p, ok := newClient(conn, nil).(peer)
+	if !ok {
+		b.Fatal("the host's side does not implement every side")
+	}
+	return p
 }

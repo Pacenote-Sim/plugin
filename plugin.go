@@ -2,13 +2,21 @@ package plugin
 
 import (
 	"context"
+	"encoding/json"
 
 	goplugin "github.com/hashicorp/go-plugin"
 	"google.golang.org/grpc"
 )
 
-// Plugin is the whole contract. Implement these three methods, call [Serve] in
-// main, put a [Manifest] beside the binary, and the host can run it.
+// Plugin is the whole of what every plugin implements: what it needs
+// configured, and what to do when told something happened. Implement these
+// two, call [Serve] in main, put a [Manifest] beside the binary, and the host
+// can run it.
+//
+// Everything else a plugin might do is optional and is its own interface: it
+// answers other plugins if it is an [Answerer], serves pages if it is a
+// [Server], asks other plugins if it is an [Asker]. A plugin implements the
+// ones it does and is never asked about the ones it does not.
 //
 // Every method is called on its own goroutine and several may be in flight at
 // once, so an implementation has to be safe for concurrent use. Every method is
@@ -31,18 +39,75 @@ type Plugin interface {
 	// The returned [Usage] is what the event cost. Return the zero value when
 	// it cost nothing. An error is logged against the plugin and nothing else:
 	// there is no retry, because an event that matters enough to retry is a
-	// request and should be one.
+	// question another plugin should be asking.
 	Notify(ctx context.Context, e Event) (Usage, error)
+}
 
-	// Answer is asked for something, with the host waiting. Return [ErrNoAnswer]
-	// when there is nothing worth saying — that is a normal outcome and the
-	// caller has its own fallback — and [ErrNotConfigured] when the operator
-	// has not filled something in.
+// Answerer is a plugin other plugins can ask something, with the asker waiting.
+//
+// A plugin implements it when its manifest declares requests, each spelled
+// "<its name>.<what>". One that declares requests and does not implement this
+// answers every question with [ErrUnsupported], which the asker sees; the
+// manifest and the binary are the author's to keep agreeing.
+type Answerer interface {
+	// Answer is asked for something. Return [ErrNoAnswer] when there is nothing
+	// worth saying — that is a normal outcome and the asker has its own
+	// fallback — and [ErrNotConfigured] when the operator has not filled
+	// something in.
 	//
-	// Missing the deadline is the one unforgivable failure: the caller is a
-	// driver at speed, and an answer that arrives after the corner is worse
-	// than no answer. Watch ctx.Done and give up.
+	// Missing the deadline is the one unforgivable failure: somebody is
+	// waiting, and an answer after they stopped is worse than none. Watch
+	// ctx.Done and give up.
 	Answer(ctx context.Context, r Request) (Response, error)
+}
+
+// Host is the server, as a plugin may address it. It is one question, because
+// one is what a plugin needs: everything else the server has to say arrives as
+// an event or a request, and everything a plugin has to store is its own.
+type Host interface {
+	// Ask puts a question to another plugin and waits for the answer.
+	//
+	// kind names the plugin that answers it — "drivers.lookup" is answered by
+	// the plugin called drivers — and it must be a plugin this one's manifest
+	// says it asks, or the host refuses with [ErrNotAllowed]. payload is
+	// whatever the two plugins agreed on; the host does not read it. The
+	// answer is the other plugin's payload, or one of the errors the contract
+	// names: [ErrUnavailable] when nothing is running to answer,
+	// [ErrUnsupported] when the plugin does not answer that kind,
+	// [ErrNoAnswer] when it had nothing to say, [ErrNotConfigured] when the
+	// operator has not set it up, and ctx's own error when the deadline
+	// passed.
+	Ask(ctx context.Context, kind string, payload json.RawMessage) (json.RawMessage, error)
+}
+
+// Asker is a plugin that asks other plugins.
+//
+// A plugin implements it when its manifest declares asks. Connected is called
+// once, when the plugin starts and before its Settings are read, with the host
+// it may ask through; keep it. A plugin whose manifest declares nothing to ask
+// is never connected, and one that asks anyway is refused.
+type Asker interface {
+	Connected(host Host)
+}
+
+// Attach gives the host's side of a running plugin the server it may reach
+// back to. The server calls it once, after the plugin is dispensed and before
+// its Settings are read, and every question that plugin then asks arrives at h.
+//
+// It returns how to take that back. The channel is served by a goroutine that
+// outlives the plugin's connection — go-plugin's multiplexed listener does not
+// return when the broker closes — so the server calls detach when it stops
+// the plugin, or leaks a server per start. detach is safe to call more than
+// once and safe to call when nothing was attached.
+//
+// ok is false for a [Plugin] that is not one of this module's own connections
+// — a fake in a test — which is then a plugin that cannot ask.
+func Attach(p Plugin, h Host) (detach func(), ok bool) {
+	c, isConn := p.(*client)
+	if !isConn || !c.attach(h) {
+		return func() {}, false
+	}
+	return c.detach, true
 }
 
 // DispenseKey is the name the single plugin implementation is registered and
@@ -94,14 +159,17 @@ type grpcPlugin struct {
 	impl Plugin
 }
 
-// GRPCServer registers the plugin's side. It runs in the plugin's process.
-func (p *grpcPlugin) GRPCServer(_ *goplugin.GRPCBroker, s *grpc.Server) error {
-	registerServer(s, p.impl)
+// GRPCServer registers the plugin's side. It runs in the plugin's process. The
+// broker is kept: it is how this process reaches the host's [Host] service when
+// the host offers one.
+func (p *grpcPlugin) GRPCServer(broker *goplugin.GRPCBroker, s *grpc.Server) error {
+	registerServer(s, p.impl, broker)
 	return nil
 }
 
 // GRPCClient builds the host's side. It runs in the server's process, and what
-// it returns is a [Plugin] that happens to be another process.
-func (p *grpcPlugin) GRPCClient(_ context.Context, _ *goplugin.GRPCBroker, c *grpc.ClientConn) (any, error) {
-	return newClient(c), nil
+// it returns is a [Plugin] that happens to be another process. The broker is
+// kept for [Attach].
+func (p *grpcPlugin) GRPCClient(_ context.Context, broker *goplugin.GRPCBroker, c *grpc.ClientConn) (any, error) {
+	return newClient(c, broker), nil
 }

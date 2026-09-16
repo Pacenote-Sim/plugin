@@ -13,7 +13,8 @@ of it. You can license your plugin however you like, including closed.
 | | |
 |---|---|
 | **Be told something happened** | `lap.completed`, `stint.finished` — derived facts, never raw traces. Fire and forget. |
-| **Be asked for something** | `cue.race`, `cue.training`, `debrief`, `setup`, `speak`, with a deadline the host means. Miss it and you are skipped. |
+| **Ask another plugin** | Through the server, which checks your manifest allows it and carries the answer back. |
+| **Be asked by another plugin** | Kinds you declare, spelled `<your name>.<what>`, with a deadline the server means. Miss it and you are skipped. |
 | **Be lent a credential** | For one call. The core holds it; you never store one. |
 | **Report what a call did** | The job it was, whether it came from your cache, and any tokens it spent. The core records it and enforces the daily cap. |
 | **Declare your settings** | The panel renders them, so an operator configures you in one place. |
@@ -44,7 +45,7 @@ Every address is declared in the manifest, and the declaration is what the host 
 | Access | Who reaches it |
 |---|---|
 | `public` | Anyone. A payment provider's webhook, a page with no session behind it. |
-| `driver` | A driver signed in to this league. |
+| `driver` | A driver of this team — signed in in a browser, or the telemetry client with its device token. You are told which; you never see the credential. |
 | `admin` | An administrator of this server. |
 | `custom` | You check it yourself, and say why in `reason`. |
 
@@ -59,6 +60,25 @@ What the host does not pass on:
 
 `examples/payments` is a worked example: a public webhook checked with an HMAC, and an operator-only
 page beside it.
+
+## Asking another plugin
+
+Plugins talk to each other through the server, never directly. The one that answers declares its
+kinds, each spelled with its own name; the one that asks names who it asks:
+
+```json
+{ "name": "drivers",  "capabilities": { "requests": ["drivers.lookup"] } }
+{ "name": "payments", "capabilities": { "asks": ["drivers"], "http": { ... } } }
+```
+
+The asker implements `Asker` and is handed a `Host` when it starts; `host.Ask(ctx, "drivers.lookup",
+payload)` reaches `drivers` and comes back with its payload. The server stamps who asked, checks both
+manifests, charges the answering plugin's daily cap, applies the deadline, and does not read the
+payload: what is in it is between the two plugins. A question may pass through at most three
+plugins, so two that ask each other stop rather than loop.
+
+`examples/drivers` and `examples/payments` are the pair: payments asks drivers whether the driver a
+payment names is one of the team's.
 
 ## Writing one
 
@@ -75,9 +95,6 @@ type mine struct{}
 
 func (mine) Settings(context.Context) ([]plugin.Setting, error) { return nil, nil }
 func (mine) Notify(context.Context, plugin.Event) (plugin.Usage, error) { return plugin.Usage{}, nil }
-func (mine) Answer(context.Context, plugin.Request) (plugin.Response, error) {
-	return plugin.Response{}, plugin.ErrUnsupported
-}
 
 func main() { plugin.Serve(mine{}) }
 ```

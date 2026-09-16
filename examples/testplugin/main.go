@@ -11,6 +11,17 @@
 // It is also the shortest complete example of writing a plugin, so it is worth
 // reading before the first real one.
 //
+// # What it answers
+//
+// Three kinds, spelled with whatever name the host installed it under:
+//
+//	<name>.echo    answers with what it was asked, who asked, and how deep
+//	<name>.ask     asks whatever the payload names — {"kind": ..., "payload": ...} — and relays the answer
+//	<name>.chain   asks itself the same question, until the host refuses; answers with how deep it got
+//
+// The last two are how a host proves its broker: one plugin reaching another
+// through it, and a loop being stopped rather than run.
+//
 // # Making it misbehave
 //
 // Behaviour comes from behaviour.json beside the binary, read fresh on every
@@ -38,6 +49,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pacenote-sim/plugin"
@@ -93,6 +105,26 @@ const (
 
 // testPlugin implements the contract.
 type testPlugin struct{ dir string }
+
+// The host this plugin may ask through, kept from Connected. It is a package
+// variable because testPlugin is a value and the host is handed over once.
+var (
+	hostMu  sync.Mutex
+	theHost plugin.Host
+)
+
+// Connected keeps the host. It runs once, before Settings is answered.
+func (p testPlugin) Connected(h plugin.Host) {
+	hostMu.Lock()
+	defer hostMu.Unlock()
+	theHost = h
+}
+
+func connectedHost() (plugin.Host, bool) {
+	hostMu.Lock()
+	defer hostMu.Unlock()
+	return theHost, theHost != nil
+}
 
 // Settings declares the form the operator fills in.
 func (p testPlugin) Settings(context.Context) ([]plugin.Setting, error) {
@@ -172,40 +204,111 @@ func (p testPlugin) Notify(ctx context.Context, e plugin.Event) (plugin.Usage, e
 //
 // It prints what it was given and nothing else. A corner it was not told about
 // does not appear, which is the same discipline a real cue is held to.
+//
+// The corner analysis and the setup arrive as the documents the client sent.
+// This plugin decodes them into shapes of its own rather than importing the
+// protocol module, which is what a plugin with no other reason to depend on it
+// would do; the fields it names are the ones it uses and the rest are ignored.
 func factLines(lap *plugin.LapFacts, stint *plugin.StintFacts) []string {
 	var out []string
 	if lap != nil {
-		out = append(out, fmt.Sprintf("lap %d in %d ms, %d corner(s)", lap.Number, lap.LapMs, len(lap.Corners)))
-		for _, c := range lap.Corners {
+		corners := cornersOf(lap)
+		out = append(out, fmt.Sprintf("lap %d in %d ms, %d corner(s)", lap.Number, lap.LapMs, len(corners)))
+		for _, c := range corners {
 			out = append(out, fmt.Sprintf(
 				"corner: turn %d at %d‰, apex %d km/h against %d km/h, %d km/h down, brake %d%% at apex, throttle lag %d‰, pattern %q",
-				c.Turn, c.ApexPct, c.ApexKmh, c.ReferenceApexKmh, c.DeficitKmh, c.BrakeAtApex, c.ThrottleLag, c.Pattern))
+				c.Turn, c.ApexPct, c.ApexKmh, c.RefApexKmh, c.DeficitKmh, c.BrakeAtApex, c.ThrottleLag, c.Pattern))
 		}
 	}
 	if stint == nil {
 		return out
 	}
 	out = append(out, fmt.Sprintf("stint: %d laps, %d%% consistent", stint.Laps, stint.ConsistencyPct))
-	if stint.Setup == nil {
+	s := setupOf(stint)
+	if s == nil {
 		return append(out, "setup: none published")
 	}
 	out = append(out, fmt.Sprintf("setup: revision %d, %d tyre(s), %d other value(s), rear wing %s",
-		stint.Setup.UpdateCount, len(stint.Setup.Tyres), len(stint.Setup.Values), wingOf(stint.Setup)))
-	for _, t := range stint.Setup.Tyres {
+		s.UpdateCount, len(s.Tyres), len(s.Values), wingOf(s)))
+	for _, t := range s.Tyres {
 		out = append(out, fmt.Sprintf(
 			"setup tyre %s: cold %.1f kPa, hot %.1f kPa, tread %.1f/%.1f/%.1f °C inner-to-outer, %.1f/%.1f/%.1f%% left",
 			t.Wheel, t.ColdKpa, t.HotKpa, t.TempInnerC, t.TempMiddleC, t.TempOuterC,
 			t.TreadInnerPct, t.TreadMiddlePct, t.TreadOuterPct))
 	}
-	for _, v := range stint.Setup.Values {
+	for _, v := range s.Values {
 		out = append(out, fmt.Sprintf("setup value %s/%s = %q (%g %s)", v.Group, v.Name, v.Text, v.Number, v.Unit))
 	}
 	return out
 }
 
+// corner is as much of the wire's corner analysis as this plugin reads.
+type corner struct {
+	Turn        int    `json:"turn"`
+	ApexPct     int    `json:"apex_pct"`
+	ApexKmh     int    `json:"apex_kmh"`
+	RefApexKmh  int    `json:"ref_apex_kmh"`
+	DeficitKmh  int    `json:"deficit_kmh"`
+	BrakeAtApex int    `json:"brake_at_apex"`
+	ThrottleLag int    `json:"throttle_lag"`
+	Pattern     string `json:"pattern"`
+}
+
+// setupSheet is as much of the wire's car setup as this plugin reads.
+type setupSheet struct {
+	UpdateCount int `json:"update_count"`
+	Tyres       []struct {
+		Wheel          string  `json:"wheel"`
+		ColdKpa        float64 `json:"cold_kpa"`
+		HotKpa         float64 `json:"hot_kpa"`
+		TempInnerC     float64 `json:"temp_inner_c"`
+		TempMiddleC    float64 `json:"temp_middle_c"`
+		TempOuterC     float64 `json:"temp_outer_c"`
+		TreadInnerPct  float64 `json:"tread_inner_pct"`
+		TreadMiddlePct float64 `json:"tread_middle_pct"`
+		TreadOuterPct  float64 `json:"tread_outer_pct"`
+	} `json:"tyres"`
+	RearWing *struct {
+		Text string `json:"text"`
+	} `json:"rear_wing"`
+	Values []struct {
+		Group  string  `json:"group"`
+		Name   string  `json:"name"`
+		Text   string  `json:"text"`
+		Number float64 `json:"number"`
+		Unit   string  `json:"unit"`
+	} `json:"values"`
+}
+
+// cornersOf decodes the lap's corner document, or nothing. A document this
+// plugin cannot read is treated as no corners rather than as an error, because
+// the lap still happened and the rest of the facts are still good.
+func cornersOf(lap *plugin.LapFacts) []corner {
+	if lap == nil || len(lap.Corners) == 0 {
+		return nil
+	}
+	var out []corner
+	if err := json.Unmarshal(lap.Corners, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// setupOf decodes the stint's setup document, or nil when none was published.
+func setupOf(stint *plugin.StintFacts) *setupSheet {
+	if stint == nil || len(stint.Setup) == 0 {
+		return nil
+	}
+	var out setupSheet
+	if err := json.Unmarshal(stint.Setup, &out); err != nil {
+		return nil
+	}
+	return &out
+}
+
 // wingOf is the rear wing setting as published, or a word saying the car has
 // none rather than an empty string that reads like a bug.
-func wingOf(s *plugin.CarSetup) string {
+func wingOf(s *setupSheet) string {
 	if s.RearWing == nil {
 		return "(none)"
 	}
@@ -229,55 +332,93 @@ func (p testPlugin) Answer(ctx context.Context, r plugin.Request) (plugin.Respon
 	greeting := r.Settings.String(settingGreeting)
 	use := p.usage(string(r.Kind), r.Settings, r.Secrets)
 
-	switch r.Kind {
-	case plugin.RequestSetup:
-		return plugin.Response{
-			Kind: r.Kind,
-			Changes: []plugin.SetupChange{{
-				Area:      "front suspension",
-				Setting:   "anti-roll bar",
-				Direction: plugin.DirectionSofter,
-				Amount:    "one click",
-				Why:       greeting + " — " + setupWhy(r.Stint),
-			}},
-			Usage:         use,
-			PromptVersion: "testplugin/1",
-		}, nil
-
-	case plugin.RequestCueRace, plugin.RequestCueTraining, plugin.RequestDebrief:
-		return plugin.Response{
-			Kind:          r.Kind,
-			Text:          p.line(greeting, r),
-			Usage:         use,
-			PromptVersion: "testplugin/1",
-		}, nil
-
+	// The kind is "<name>.<what>", and what this plugin was installed as is the
+	// host's business: only the part after the dot is this plugin's.
+	switch what := strings.TrimPrefix(string(r.Kind), r.Kind.Plugin()+"."); what {
+	case "echo":
+		return echo(greeting, r, use)
+	case "ask":
+		return relay(ctx, r, use)
+	case "chain":
+		return chain(ctx, r, use)
 	default:
 		return plugin.Response{}, plugin.ErrUnsupported
 	}
 }
 
-// setupWhy is the reason a setup change carries, taken from the measurement
-// that is actually in the facts.
-//
-// It prefers the tread temperatures of the car's own setup sheet, because the
-// spread across one tyre is the canonical camber reading and is about the wheel
-// being changed, and falls back to the four-corner spread of the stint when the
-// simulator published no setup. Both are numbers the plugin was handed; neither
-// is a symptom it asked the driver to pick off a dropdown.
-func setupWhy(s *plugin.StintFacts) string {
-	if s.Setup != nil {
-		if t, ok := s.Setup.TyreAt(plugin.WheelLF); ok && t.TempInnerC > 0 && t.TempOuterC > 0 {
-			return fmt.Sprintf("the left front ran %.0f degrees hotter on the inner edge than on the outer.",
-				t.TempInnerC-t.TempOuterC)
-		}
+// echo answers with what it was asked and what it was told about the asking,
+// so a host's tests can read both back. The names of the settings and the
+// credentials are in it — the values never are.
+func echo(greeting string, r plugin.Request, use plugin.Usage) (plugin.Response, error) {
+	var payload any
+	if len(r.Payload) > 0 {
+		payload = r.Payload
 	}
-	return fmt.Sprintf("the hottest tyre is %.0f degrees above the coldest.", s.Tyres.SpreadC)
+	out, err := json.Marshal(map[string]any{
+		"greeting":    greeting,
+		"from":        r.From,
+		"hops":        r.Hops,
+		"echo":        payload,
+		"settings":    r.Settings.Names(),
+		"credentials": r.Secrets.Names(),
+	})
+	if err != nil {
+		return plugin.Response{}, err
+	}
+	return plugin.Response{Kind: r.Kind, Payload: out, Usage: use}, nil
 }
 
-// line is the sentence, built only out of facts it was given. Inventing a turn
-// number here would be inventing one in a real plugin, and the example should
-// not teach that.
+// relay asks whatever the payload names and answers with what came back — or
+// with the error, which is the point: a host's test reads the refusal from the
+// asking side.
+func relay(ctx context.Context, r plugin.Request, use plugin.Usage) (plugin.Response, error) {
+	var ask struct {
+		Kind    string          `json:"kind"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(r.Payload, &ask); err != nil {
+		return plugin.Response{}, fmt.Errorf("%w: the payload does not say what to ask: %w", plugin.ErrInvalid, err)
+	}
+	host, ok := connectedHost()
+	if !ok {
+		return plugin.Response{}, fmt.Errorf("%w: this plugin was never connected to the host", plugin.ErrUnavailable)
+	}
+	out, err := host.Ask(ctx, ask.Kind, ask.Payload)
+	if err != nil {
+		return plugin.Response{}, err
+	}
+	return plugin.Response{Kind: r.Kind, Payload: out, Usage: use}, nil
+}
+
+// chain asks the same question on — of the partner the payload names, or of
+// itself when it names none — and answers with how deep the host let it go. The
+// host refusing is the expected end, not a failure.
+func chain(ctx context.Context, r plugin.Request, use plugin.Usage) (plugin.Response, error) {
+	host, ok := connectedHost()
+	if !ok {
+		return plugin.Response{}, fmt.Errorf("%w: this plugin was never connected to the host", plugin.ErrUnavailable)
+	}
+	var link struct {
+		Partner string `json:"partner"`
+	}
+	_ = json.Unmarshal(r.Payload, &link)
+	me := r.Kind.Plugin()
+	next, onward := string(r.Kind), r.Payload
+	if link.Partner != "" {
+		next = link.Partner + ".chain"
+		onward = json.RawMessage(`{"partner":"` + me + `"}`)
+	}
+	if out, err := host.Ask(ctx, next, onward); err == nil {
+		// Somebody deeper answered: their depth is the deepest.
+		return plugin.Response{Kind: r.Kind, Payload: out, Usage: use}, nil
+	}
+	out, err := json.Marshal(map[string]int{"reached": r.Hops})
+	if err != nil {
+		return plugin.Response{}, err
+	}
+	return plugin.Response{Kind: r.Kind, Payload: out, Usage: use}, nil
+}
+
 // ServeHTTP answers a request made of this plugin's own route, which is how the
 // host's HTTP path is exercised end to end.
 //
@@ -326,28 +467,6 @@ func (p testPlugin) ServeHTTP(ctx context.Context, r plugin.HTTPRequest) (plugin
 		Body:   echo,
 		Usage:  p.usage("serve", r.Settings, r.Secrets),
 	}, nil
-}
-
-func (p testPlugin) line(greeting string, r plugin.Request) string {
-	var b strings.Builder
-	b.WriteString(greeting)
-	b.WriteString(", ")
-	b.WriteString(r.Driver.Name)
-	if r.Lap != nil {
-		fmt.Fprintf(&b, ": lap %d, %s", r.Lap.Number, r.Lap.SpokenLap)
-		if len(r.Lap.Corners) > 0 {
-			fmt.Fprintf(&b, ", Turn %d cost you %d k m per hour of apex speed",
-				r.Lap.Corners[0].Turn, r.Lap.Corners[0].DeficitKmh)
-		}
-	}
-	if r.Stint != nil {
-		fmt.Fprintf(&b, ": %d laps, %d per cent consistent", r.Stint.Laps, r.Stint.ConsistencyPct)
-	}
-	b.WriteString(".")
-	if r.Settings.String(settingLoudness) == "loud" {
-		fmt.Fprintf(&b, " Configured with %v; credentials for %v.", r.Settings.Names(), r.Secrets.Names())
-	}
-	return b.String()
 }
 
 // usage is what to report. A credential being present is what makes this plugin

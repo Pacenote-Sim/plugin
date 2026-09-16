@@ -11,7 +11,16 @@ import "fmt"
 // may ignore a field that now carries the meaning. Both are a coach saying
 // something wrong to a driver at speed, hours after anyone would connect it to
 // an upgrade. There is no degraded mode here on purpose.
-const InterfaceVersion = 1
+//
+// Version 2: the corner analysis and the car setup cross as the documents the
+// client sent rather than as typed fields, and the fuel per lap and the tyre
+// spread are no longer worked out by the host.
+//
+// Version 3: plugins ask each other. A request is an open kind spelled with the
+// answering plugin's name and an opaque payload; Answer is optional; a plugin
+// that asks is handed the host through a second channel on the same connection.
+// The host itself no longer asks anything.
+const InterfaceVersion = 3
 
 // MagicCookieKey and MagicCookieValue are the handshake go-plugin performs
 // before either side speaks. They are not security — anything that can run the

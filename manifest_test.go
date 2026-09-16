@@ -35,7 +35,7 @@ func TestParseManifest(t *testing.T) {
 		{
 			name: "everything declared at once is accepted",
 			json: `{"name":"x","version":"1","author":"a","description":"d","interface_version":1,"binary":"x-plugin",
-				"capabilities":{"events":["lap.completed","stint.finished"],"requests":["cue.race","cue.training","debrief","setup"],
+				"capabilities":{"events":["lap.completed","stint.finished"],"requests":["x.cue","x.setup"],"asks":["drivers"],
 				"network":true,"writes_files":true,"reads_driver_data":true}}`,
 		},
 		{name: "a truncated document is refused", json: `{"name": "x"`, wantErr: "is not readable"},
@@ -86,9 +86,24 @@ func TestParseManifest(t *testing.T) {
 			wantErr: "is not an event this server carries",
 		},
 		{
-			name:    "a request this server does not make is refused",
-			json:    `{"name":"x","version":"1","author":"a","description":"d","interface_version":1,"capabilities":{"requests":["tell.joke"]}}`,
-			wantErr: "is not a request this server makes",
+			name:    "a request kind that is not spelled like one is refused",
+			json:    `{"name":"x","version":"1","author":"a","description":"d","interface_version":1,"capabilities":{"requests":["tell joke"]}}`,
+			wantErr: "is not a request kind",
+		},
+		{
+			name:    "a request kind spelled for another plugin is refused",
+			json:    `{"name":"x","version":"1","author":"a","description":"d","interface_version":1,"capabilities":{"requests":["drivers.lookup"]}}`,
+			wantErr: "a plugin's kinds are spelled <its name>.<what>",
+		},
+		{
+			name:    "asking something that is not a plugin name is refused",
+			json:    `{"name":"x","version":"1","author":"a","description":"d","interface_version":1,"capabilities":{"events":["lap.completed"],"asks":["Bad Name"]}}`,
+			wantErr: "is not a plugin name",
+		},
+		{
+			name:    "a plugin that asks itself is a loop, not a capability",
+			json:    `{"name":"x","version":"1","author":"a","description":"d","interface_version":1,"capabilities":{"events":["lap.completed"],"asks":["x"]}}`,
+			wantErr: "asks itself",
 		},
 		{
 			name:    "a plugin nothing would ever call is refused",
@@ -164,9 +179,19 @@ func TestCapabilities(t *testing.T) {
 		t.Parallel()
 		r := require.New(t)
 
-		c := plugin.Capabilities{Requests: []plugin.RequestKind{plugin.RequestSetup}}
-		r.True(c.Answers(plugin.RequestSetup))
-		r.False(c.Answers(plugin.RequestCueRace))
+		c := plugin.Capabilities{Requests: []plugin.RequestKind{"x.setup"}}
+		r.True(c.Answers("x.setup"))
+		r.False(c.Answers("x.cue"))
+	})
+
+	t.Run("a declared target may be asked and nothing else may", func(t *testing.T) {
+		t.Parallel()
+		r := require.New(t)
+
+		c := plugin.Capabilities{Asks: []string{"drivers"}}
+		r.True(c.MayAsk("drivers"))
+		r.False(c.MayAsk("payments"))
+		r.False(plugin.Capabilities{}.MayAsk("drivers"))
 	})
 
 	t.Run("what the operator reads names every declaration", func(t *testing.T) {
@@ -175,15 +200,17 @@ func TestCapabilities(t *testing.T) {
 
 		lines := plugin.Capabilities{
 			Events:          []plugin.EventKind{plugin.EventLapCompleted},
-			Requests:        []plugin.RequestKind{plugin.RequestCueRace},
+			Requests:        []plugin.RequestKind{"x.cue"},
+			Asks:            []string{"drivers", "results"},
 			Network:         true,
 			WritesFiles:     true,
 			ReadsDriverData: true,
 		}.Describe()
-		r.Len(lines, 5)
+		r.Len(lines, 6)
 		r.Contains(lines[0], "lap.completed")
-		r.Contains(lines[1], "cue.race")
-		r.Contains(lines[2], "outside this machine")
+		r.Contains(lines[1], "x.cue")
+		r.Equal("Asks drivers, results for information.", lines[2])
+		r.Contains(lines[3], "outside this machine")
 	})
 
 	t.Run("a plugin that declares nothing says so", func(t *testing.T) {

@@ -49,8 +49,10 @@ const (
 	// publishes something a league wants public — a leaderboard, a results
 	// page somebody links to from a forum.
 	AccessPublic Access = "public"
-	// AccessDriver forwards only where the host holds a driver session, and
-	// answers everybody else itself. The plugin is told which driver.
+	// AccessDriver forwards only where the host knows which driver is calling
+	// — a browser with a session, or the telemetry client with its device
+	// token — and answers everybody else itself. The plugin is told which
+	// driver, and never sees the token or the cookie that said so.
 	AccessDriver Access = "driver"
 	// AccessAdmin forwards only where the host holds an administrator session.
 	// It is for a plugin that adds something to the operator's own tools.
