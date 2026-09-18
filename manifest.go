@@ -40,6 +40,11 @@ type Capabilities struct {
 	// declaration that matters most, because it is the one that turns the
 	// operator's data into somebody else's.
 	Network bool `json:"network"`
+	// Calls names what it calls: the hosts, as an operator would recognise
+	// them — "api.anthropic.com". A plugin that declares Network without
+	// naming anything is shown as one that does not say where the data goes,
+	// which is what it is.
+	Calls []string `json:"calls,omitempty"`
 	// WritesFiles reports that it writes to disk.
 	WritesFiles bool `json:"writes_files"`
 	// ReadsDriverData reports that it uses the driver's name and record rather
@@ -116,8 +121,11 @@ func (c Capabilities) Describe() []string {
 	if len(c.Asks) > 0 {
 		out = append(out, "Asks "+strings.Join(c.Asks, ", ")+" for information.")
 	}
-	if c.Network {
-		out = append(out, "Calls something outside this machine.")
+	switch {
+	case len(c.Calls) > 0:
+		out = append(out, "Calls "+strings.Join(c.Calls, ", ")+".")
+	case c.Network:
+		out = append(out, "Calls something outside this machine, and does not say what.")
 	}
 	if c.WritesFiles {
 		out = append(out, "Writes files.")
@@ -157,6 +165,14 @@ func (c Capabilities) Validate() error {
 	for _, a := range c.Asks {
 		if !validName(a) {
 			return fmt.Errorf("%w: %q is not a plugin name, so it cannot be asked anything", ErrInvalid, a)
+		}
+	}
+	if len(c.Calls) > 0 && !c.Network {
+		return fmt.Errorf("%w: the plugin names hosts it calls and says it makes no network calls", ErrInvalid)
+	}
+	for _, h := range c.Calls {
+		if !validHost(h) {
+			return fmt.Errorf("%w: %q is not a host name — name what is called as an operator would read it, like api.anthropic.com", ErrInvalid, h)
 		}
 	}
 	if c.HTTP != nil {
@@ -282,4 +298,37 @@ func (m Manifest) Executable(dir string) string {
 		name += ".exe"
 	}
 	return filepath.Join(dir, name)
+}
+
+// validHost is a host an operator can read and look up: labels of lowercase
+// letters, digits and hyphens joined by dots, with an optional port. No scheme,
+// no path, no wildcard — the point is a name, not a pattern.
+func validHost(h string) bool {
+	host, port, hasPort := strings.Cut(h, ":")
+	if hasPort {
+		if port == "" || len(port) > 5 {
+			return false
+		}
+		for _, c := range port {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+	}
+	if host == "" || len(host) > 253 || strings.HasPrefix(host, ".") || strings.HasSuffix(host, ".") || strings.Contains(host, "..") {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+		for _, c := range label {
+			switch {
+			case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-':
+			default:
+				return false
+			}
+		}
+	}
+	return true
 }

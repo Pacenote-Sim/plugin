@@ -20,6 +20,7 @@ of it. You can license your plugin however you like, including closed.
 | **Declare your settings** | The panel renders them, so an operator configures you in one place. |
 | **Keep tables of your own** | Your own PostgreSQL role and schema, your own migrations, dropped when you are uninstalled. |
 | **Serve your own pages** | At `/plugin/<your name>/`, with the host deciding who may reach each one. |
+| **Say what you call** | `"network": true` and `"calls": ["api.anthropic.com"]` — the panel tells the operator where their data goes before they enable you. A plugin that declares network and names nothing is shown as one that does not say. |
 
 ## Serving pages
 

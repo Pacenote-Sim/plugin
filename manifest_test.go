@@ -210,7 +210,31 @@ func TestCapabilities(t *testing.T) {
 		r.Contains(lines[0], "lap.completed")
 		r.Contains(lines[1], "x.cue")
 		r.Equal("Asks drivers, results for information.", lines[2])
-		r.Contains(lines[3], "outside this machine")
+		r.Equal("Calls something outside this machine, and does not say what.", lines[3],
+			"a plugin that names nothing it calls must be shown as one that does not say")
+	})
+
+	t.Run("a plugin that names what it calls is described by it", func(t *testing.T) {
+		t.Parallel()
+		r := require.New(t)
+
+		told := []plugin.EventKind{plugin.EventLapCompleted}
+		named := plugin.Capabilities{Events: told, Network: true, Calls: []string{"api.anthropic.com", "hooks.slack.com"}}
+		r.NoError(named.Validate())
+		r.Equal("Calls api.anthropic.com, hooks.slack.com.", named.Describe()[1])
+
+		// Naming hosts while claiming no network is a contradiction, and a
+		// host has to be one an operator can read and look up.
+		r.Error(plugin.Capabilities{Events: told, Calls: []string{"api.anthropic.com"}}.Validate())
+		for _, bad := range []string{
+			"https://api.anthropic.com", "api.anthropic.com/v1", "*.anthropic.com",
+			"API.anthropic.com", "-api.anthropic.com", "api..anthropic.com", "api.anthropic.com:", "api.anthropic.com:port", "", "two words",
+		} {
+			r.Errorf(plugin.Capabilities{Events: told, Network: true, Calls: []string{bad}}.Validate(), "accepted %q as a host", bad)
+		}
+		for _, good := range []string{"api.anthropic.com", "localhost", "db-1.internal:5432", "127.0.0.1"} {
+			r.NoErrorf(plugin.Capabilities{Events: told, Network: true, Calls: []string{good}}.Validate(), "refused %q", good)
+		}
 	})
 
 	t.Run("a plugin that declares nothing says so", func(t *testing.T) {

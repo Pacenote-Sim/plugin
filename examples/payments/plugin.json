@@ -7,6 +7,9 @@
   "binary": "payments",
   "capabilities": {
     "network": true,
+    "calls": [
+      "api.stripe.com"
+    ],
     "database": true,
     "reads_driver_data": true,
     "http": {

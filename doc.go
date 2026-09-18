@@ -55,6 +55,7 @@
 //	  "capabilities": {
 //	    "events": ["lap.completed"],
 //	    "network": true,
+//	    "calls": ["chat.example.com"],
 //	    "reads_driver_data": true
 //	  }
 //	}
